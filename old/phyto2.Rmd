@@ -1,0 +1,452 @@
+---
+title: 'Changing Perspectives California Grassland Restoration: What was the prehistoric
+  distribution of Native grasses, what the current distribution, and how do they compare?'
+author: "Steve Fick"
+date: September 10, 2015
+bibliography: bibliography.bib
+output: 
+  pdf_document:
+    toc: true
+---
+  
+  <!--
+  
+  ToDo:
+  
+  [] Conceptual Hook:
+  [] Fit bioclimatic SDM under paleo-climate scenarios, and predict under current scenarios
+[] How does species distribution change
+[] What model(s) explain the most variation, and what variables seem to be important?
+
+[] model Eval
+[x] cross validation function
+[x] Spatial autocorrelation of residuals
+[] scaled predictors for interpretation
+
+[] Read Clary
+
+-->
+
+# Introduction
+
+It has been traditionally assumed that prior to European colonization, California grasslands were dominated by native, perennial bunch-grasses (clements). As a result, most ecological restoration in these areas, which are now dominated by annual exotic grasses and forbs, has focused on (re)introducing a native perennial grass component to these communities. New evidence from soil phytoliths records (silcate deposits generated over millenia by grasses) and re-evaluations of historical accounts have called this fundamental assumption into question. It has been hypothesized that perrenial bunchgrasses composed a minor component of pre-columbian communities, if at all. 
+
+Species distribution models make use of relationships between recorded observations of species (or species density) and environmental covariates related to each record location to make predictions about the likelihood of species occupation at unsampled locations. Previous maps of prehistoric native grass distributions in California have identified large swaths of the central valley as likely dominated by native grasses (Kuchler 1977). Given recent suspcions about the true extent of perennial grass dominance in what is now California annual grasslands, new visualizations of native grass distributions based on phytolith-derived distribution models may be helpful for evaluating restoration decisions.  
+
+
+Previous analyses of phytolith data have revealed a coarse decline in average phytolith density between coastal and interior California [@evett_phytolith_2013]. This pattern is thought to be related to differences in climate such as warm-season temperatures and precipitation, as has been observed in analyses of modern distributions of native perennial grasses in California [@clary_determinants_2012]. However the the relationships between phytolith assemblages and environmental parameters were not explicitly tested in this analysis. @clary_determinants_2012 identified four variables significantly correlated with current densities of native perennial grasses in California : 1) the number degree-days over 18 C (negatively correlated), 2) slope ( negative correlated) 3) Proximity to the pacific coast (positively correlated), and 4) average warm season precipitation (positively correlated). The growing phytolith datasets provide a means to test these environment-distribution relationships in a pre-historic context. 
+
+The following analysis is based on three guiding questions:
+
+1. What was the pre-historic distribution of Native Perennial Grasses, based on phytolith-derived species distribution models.
+
+2. How does the distribution predicted from phytoliths compare to estimates based on durrent distributions of Native Perennial Grasses?
+
+3. What are the important environmental factors which most strongly correlate with grass presence, both currently and pre-historically?
+
+
+![kuchler 1977](C:/projects/phytolith/data/Keuchler77.png)  
+Fig 1. (from @evett_phytolith_2013) Shaded area indicates supposed pre-historic extent of native perennial grasses
+
+
+```{r setup, warning=FALSE, message = FALSE}
+library(maps)
+library(fields)
+library(raster)
+library(dismo)
+library(xtable)
+library(arm)
+
+setwd('C:/projects/phytolith/')
+
+p <- read.csv('data/dat.csv', stringsAsFactors = F)
+
+# remove records with missing spatial information
+p <- p[-which(is.na(p$lon)),]
+
+# reverse longitude
+p$lon <- -1*p$lon
+
+# Grass threshold according to Evett and Bartolome
+p$grass <- as.factor(p$phyto_content >= .3)
+
+# Had bilobate cells (only produced by PNG)
+p$PNG <- as.numeric(p$bilobate_cells > 0)
+
+# Choose the variable to be modeled. 
+# I am interested in suitability for 'bilobateness'. I take the log to trim the extreme sample.
+p$y <- log(p$bilobate_cells + 1) 
+
+# fix bilob_ratio
+p$bilob_ratio <- gsub('[*]','', p$bilob_ratio)
+p$bilob_ratio <- as.numeric(p$bilob_ratio)
+
+sp <- p
+coordinates(sp) <- ~ lon + lat
+
+# create a distance matrix between points to consider spatial autocorrelation in models
+dd <- as.matrix(as.dist(pointDistance(sp, lonlat = TRUE, allpairs=TRUE)))
+dd.inv <- 1/dd
+diag(dd.inv) <- 0
+
+```
+
+
+```{r}
+# Covariates
+b <- brick('C:/projects/phytolith/data/predictors.grd')
+mb <- brick('C:/projects/phytolith/data/mpredictors.grd')
+ca <- shapefile('C:/Users/steve/Downloads/GEO2015/13/counties_2000.shp')
+
+# Extract from location
+X <- as.data.frame(extract(b, sp))
+i <- which(is.na(X$slope))
+X$slope[i] <- 0
+X$northness[i] <- X$eastness[i] <-pi/2 
+ 
+```
+
+```{r maps, cache =TRUE}
+
+  # Plot of sites
+  plot(mb$hillshade, col=grey(0:100/100),legend = FALSE, main = 'Phytolith Sample Locations')
+  plot(mb$alt, col = rainbow(25, alpha = .25), add=TRUE)
+  scalebar(200, divs = 4, below = 'km', type = 'bar')
+  points (sp, pch =3); points(sp[which(as.logical(p$grass)),], col = 'red', cex = 1.2)
+  legend('topright', col = c(1,'green'), pch =c(3,1), legend = c('sample location', 'high probability of grass'))
+
+```
+
+
+```{r formulae,  include = FALSE}
+
+library(MASS)
+library(glmnet)
+library(randomForest)
+library(rpart)
+
+
+ensemble.fit <- function(f,dat,X,Y){
+  list(
+    OLS = stepAIC( lm(f, data = dat), trace =0),
+    CT = rpart(f, data =dat),
+    RF = randomForest(f, data = dat, ntree=2000, mtry = 2),
+    ridge = glmnet(as.matrix(X),Y,alpha =0,  lambda = cv.glmnet (as.matrix(X),Y,alpha =0)$lambda.min),
+    lass = glmnet( as.matrix(X),Y,alpha =1, lambda =  cv.glmnet (as.matrix(X),Y,alpha =1)$lambda.min )
+  )
+}
+
+
+ensemble.pred <- function(ens, ndata, nX, nY, wts = NULL){
+   with( ens, {
+          d <- data.frame(
+            OLS = predict(OLS, ndata),
+            CT = predict(CT, ndata),
+            RF = predict(RF, ndata),
+            ridge = as.vector(predict(ridge, as.matrix(nX))),
+            lass = as.vector(predict(lass, as.matrix(nX)))
+            )
+          if (is.null(wts)) d$ens <- rowMeans(d) else d$ens <- apply(d, 1, function(x) sum(x*wts))
+          d
+          })
+  }
+
+
+  moran <- function(resids, d = dd.inv) {
+    require(spdep)
+    mat <- mat2listw(d)  
+    lower <- moran.mc(resids, mat, 999, alternative = 'less')$p.value
+    upper <- moran.mc(resids, mat, 999)
+    return(list ( upperp = upper$p.value, lowerp = lower, i = upper$statistic, res = upper$res))
+  }
+
+
+kfoldcv <- function(f,dat,X,Y, seed=77, k = 5, wts = NULL){
+  require(dismo)
+  i <- kfold(1:nrow(dat), k = k)
+  
+  out <- list()
+  
+  for (j in 1:k){
+   # cat( '\r', j , ' / ', k); flush.console()
+    train <- which(i != j)
+    test <- which( i == j)
+    fit <- ensemble.fit(f,dat[train,],X,Y)
+    out[[j]] <- ensemble.pred(fit, dat[test,], X[test,], Y[test], wts = wts)        
+  }
+  
+  p.out <- do.call(rbind,out)
+  p.out <- p.out[order(as.numeric(row.names(p.out))),]
+  
+  resp.name <- all.vars(f)[1]
+  COR <- apply(p.out,2, function(x) cor( x, Y))
+  Err <-  Y- p.out
+  SSE <- apply(Err, 2, function(e) sum(e ^ 2))
+  MSE <- apply(Err, 2, function(e) mean(e ^ 2))
+  MAE <- apply(Err, 2, function(e) mean(abs(e)))
+  ME <- apply(Err, 2, function(e) mean(e))
+  RMSE <- sqrt(MSE)
+  mor <- apply(Err, 2, function(e) moran(e))
+  mor.up <- sapply(mor,function(x)x$upperp)
+  mor.dn <- sapply(mor,function(x)x$lowerp)
+  
+  return( list( stats = cbind('cor'= COR, 'SSE' = SSE, 'MSE' = MSE, 'RMSE' = RMSE, 'ME' = ME, 'MAE' = MAE, "moran lower" = mor.dn,  'moran upper' = mor.up ), predicted = p.out, obs = Y))
+  }
+
+getWts <- function(x, low = TRUE){ if (low) 1/x /(sum(1/x)) else x / sum(x) }
+
+predict.gnet <- function(r, m, ...){
+  xn <- row.names(m$beta)
+  out <- raster(r)
+  out <- writeStart(out, rasterTmpFile(), overwrite=TRUE)
+  bs <- blockSize(r)
+  pb <- pbCreate(bs$n, ...)
+  for (i in 1:bs$n) {
+    v <- getValues(r, row = bs$row[i], nrows = bs$nrows[i])
+    p.v <- predict(m , v[,xn])
+    out <- writeValues(out, p.v, bs$row[i])
+    pbStep(pb, i)
+  }
+  out <- writeStop(out)
+  pbClose(pb)
+  return(out)
+}
+```
+
+
+```{r model selection, include = FALSE, cache = TRUE}
+
+# Data
+  XX <- X[ , -which(names(X) %in% c('veg', 'hillshade'))]
+  
+  #only use 400AD bioclim variables
+  XX <- XX[ , -grep('bio[1-9]',names(XX))]
+  XX <- XX[ , -grep('bioclim_6',names(XX))]
+#  XX <- XX[ , -grep('bioclim_4',names(XX))]
+
+  #exclude some soil covariates which likely vary on short timescales
+  XX <- XX[ , -which(names(XX) %in% c('carbon','ph','cec'))]
+
+  #XX$y <- log(p[, 'total_phyto'])
+  XX$y <- log(1 + p[, 'bilobate_cells'])
+  #XX$y <- p[, 'bilob_ratio']
+  
+  f <- y ~ .  
+  xn <- which(names (XX) != 'y')
+  yn <- which(names(XX) == 'y')
+
+  # do an initial kfold cv to determine weighting scheme for ensemble
+  kf.results <- list()
+  for(i in 1:3){
+    cat(i);flush.console()
+    kf <- kfoldcv(f, XX, XX[,xn], XX[,yn], wts = NULL, k = 5, seed = i)
+    kf.results[[i]] <- kf$stats
+  }
+  
+  (kf.results <- Reduce('+', kf.results)/length(kf.results))
+  
+  # get weights for models 
+  wts <- getWts(kf.results[1:(nrow(kf.results)-1),'MSE'], low = TRUE)
+  
+  # now check kfold again, also inspecting the ensemble 
+
+  kf <- kfoldcv(f, XX, XX[,xn], XX[,yn], wts = wts, k = 5, seed = 999)
+  kf$stats
+  
+  ens <- ensemble.fit(f, XX, XX[,xn],XX[,yn])
+  p.ens <- ensemble.pred(ens, XX, XX[,xn], XX[,yn], wts = wts)
+  lapply(p.ens, function(x) cor(x,XX$y))
+  
+  mor <- apply(p.ens-XX$y, 2, function(e) moran(e))
+  
+  
+  # moran test of model residuals
+  moran.result <- sapply(mor, function(x) cbind(x$i, x$lowerp,x$upperp))
+  row.names(moran.result) <- c('I','lower P-value', 'upper P-value')
+  t(moran.result)
+
+  #correlation of model residuals
+  
+  cor(XX$y-p.ens)
+
+```
+
+
+```{r dismo, cache= TRUE, include = FALSE}
+# predictions
+
+#random forest prediction
+p.rf <- predict(mb, ens$RF)
+
+
+#OLS prediction
+p.ols <- predict(mb, ens$OLS)
+#plot(exp(p.ols))
+
+#CT prediction
+p.ct <- predict(mb, ens$CT)
+
+
+#ridge prediction
+p.ridge <- predict.gnet(mb, ens$ridge, progress = 'text')
+# p.ridge[p.ridge < -10] <- -10
+
+
+#lasso prediction
+p.lasso <- predict.gnet(mb, ens$lass, progress = 'text')
+# p.lasso[p.lasso < -10] <- -10
+# p.lasso[p.lasso>7] <- 7
+
+
+# p.lasso[p.lasso < -10] <- -10
+
+
+m <- mean(p.ols,p.rf)
+m[m > 6.5] <- 6.5
+
+m.ens <- p.ols * wts['OLS'] + p.ct * wts['CT'] + p.rf * wts['RF'] + p.ridge* wts['ridge'] + p.lasso*wts['lass'] 
+#m.ens[m.ens < 0 ] <- 0
+m.ens[m.ens > quantile(m.ens, .999)] <- quantile(m.ens, .999)
+
+m.ens[exp(m.ens) > 20] <- log(20)
+
+# 
+```
+
+
+```{r}
+png("C:/projects/phytolith/out/fig/bilob_400AD_randforest.png", width = 1000, height = 1200)
+  plot(exp(p.rf) -1,  main = 'Predicted bilobate suitability \n(random forest)' ); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+dev.off()
+
+png("C:/projects/phytolith/out/fig/phyto_content_distribution_400AD_CART.png", width = 1000, height = 1200)
+  plot(exp(p.ct),  main = 'Predicted phytolith content \n(CART)' ); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+dev.off()
+
+png("C:/projects/phytolith/out/fig/phyto_content_distribution_400AD_lasso.png", width = 1000, height = 1200)
+  plot(exp(p.lasso)-1, main = 'Predicted phytolith content\n(lasso regression)' ); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+dev.off()
+
+
+png("C:/projects/phytolith/out/fig/stipa_suitability_400AD_ensemble.png", width = 1000, height = 1200)
+
+  plot(exp(m.ens), col = gray(100:1/100), main = 'Predicted Stipa/Danthonia Content \n(Ensemble Model)' ); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+
+dev.off()
+
+
+
+```
+
+```{r vimp}
+codex <- c(
+ bio1 = "Annual Mean Temperature",
+ bio2 = "Mean Diurnal Range (Mean of monthly (max temp - min temp))",
+ bio3 = "Isothermality (bio2/bio7) (  100)",
+ bio4 = "Temperature Seasonality (standard deviation  100)",
+ bio5 = "Max Temperature of Warmest Month",
+ bio6 = "Min Temperature of Coldest Month",
+ bio7 = "Temperature Annual Range (bio5-bio6)",
+ bio8 = "Mean Temperature of Wettest Quarter",
+ bio9 = "Mean Temperature of Driest Quarter",
+ bio10 = "Mean Temperature of Warmest Quarter",
+ bio11 = "Mean Temperature of Coldest Quarter",
+ bio12 = "Annual Precipitation",
+ bio13 = "Precipitation of Wettest Month",
+ bio14 = "Precipitation of Driest Month",
+ bio15 = "Precipitation Seasonality (Coefficient of Variation)",
+ bio16 = "Precipitation of Wettest Quarter",
+ bio17 = "Precipitation of Driest Quarter",
+ bio18 = "Precipitation of Warmest Quarter",
+ bio19 = "Precipitation of Coldest Quarter" )
+
+vn <- names(ens$RF$forest$xlevels)
+vn <- gsub('bioclim_400AD.', 'bio', vn)
+vn[ match(names(codex), vn) ] <- codex
+vn[ which(vn == 'clay')] <- "Clay content"
+vn[ which(vn == 'bulk')] <- "Bulk density"
+vn[ which(vn == 'alt')] <- "Elevation"
+
+png("C:/projects/phytolith/out/fig/phyto_content_distribution_rf_vimp.png", width = 1000, height = 600)
+  varImpPlot(ens$RF , n.var = 10, labels = rev(vn[order(importance(ens$RF), decreasing = TRUE)][1:10]), main = 'Random Forest Variable Importance')
+dev.off()
+
+
+# CART plot
+
+require(rpart.plot)
+X2 <- XX
+names(X2) <-gsub('bioclim_400AD.', 'bio', names(X2))
+names(X2) <- ifelse(!names(X2) %in% names(codex),names(X2), codex[names(X2)])
+CT2 <- update(ens$CT, data = X2)
+
+png("C:/projects/phytolith/out/fig/phyto_content_distribution_CT_tree.png", width = 1000, height = 1000)
+  prp(CT2, varlen = 0, uniform = FALSE, main = 'CART results for phytolith content')
+dev.off()
+
+
+# scaled OLS coefplot
+
+XX.scaled <- as.data.frame(scale(XX))
+OLS.s <- update(ens$OLS, data = XX.scaled)
+vn2 <- names(OLS.s$coefficients)
+vn2 <- gsub('bioclim_400AD.', 'bio', vn2)
+vn2 <- ifelse(!vn2 %in% names(codex),vn2, codex[vn2])
+
+vn2[ which(vn2 == 'clay')] <- "clay content"
+vn2[ which(vn2 == 'alt')] <- "elevation"
+
+png("C:/projects/phytolith/out/fig/phyto_content_distribution_OLs_coefplot.png", width = 1000, height = 1000)
+coefplot(OLS.s, mar=c(1,15,5.1,2), varnames = vn2, main = 'OLS results phytolith content')
+dev.off()
+
+# scaled ridge regression coefplot
+ridge.s = glmnet(as.matrix(XX.scaled[,xn]),XX.scaled[,yn],alpha =0,  lambda = cv.glmnet (as.matrix(XX.scaled[,xn]),XX.scaled[,yn],alpha =0)$lambda.min)
+    
+lasso.s = glmnet(as.matrix(XX.scaled[,xn]),XX.scaled[,yn],alpha =1,  lambda = cv.glmnet (as.matrix(XX.scaled[,xn]),XX.scaled[,yn],alpha =1)$lambda.min)
+
+
+vn.r <-row.names(ridge.s$beta)
+vn.r <- gsub('bioclim_400AD.', 'bio', vn.r)
+vn.r <- ifelse(!vn.r %in% names(codex),vn.r, codex[vn.r])
+cf.r <- as.vector(ridge.s$beta)
+ord.r <- order(abs(cf.r), decreasing = TRUE)[1:15]
+
+png("C:/projects/phytolith/out/fig/phyto_content_distribution_ridge_coefplot.png", width = 1000, height = 1000)
+
+dotchart(cf.r[ord.r], labels = vn.r[ord.r]); abline(v = 0, lty = 2, main = 'phytolith content \n (ridge regression)')
+dev.off(90)
+
+vn.s <-row.names(lasso.s$beta)
+vn.s <- gsub('bioclim_400AD.', 'bio', vn.s)
+vn.s <- ifelse(!vn.s %in% names(codex),vn.s, codex[vn.s])
+cf.s <- as.vector(lasso.s$beta)
+ord.s <- order(abs(cf.s), decreasing = TRUE)[1:15]
+
+png("C:/projects/phytolith/out/fig/phyto_content_distribution_lasso_coefplot.png", width = 1000, height = 1000)
+
+dotchart(cf.s[ord.s], labels = vn.s[ord.s]); abline(v = 0, lty = 2)
+
+dev.off()
+```
+
+# Methods
+
+## 1. Data
+
+
+### phytolith data
+Phytolith data was taken from [@evett_phytolith_2013]. 
+
+### Climate data
+
+Paleoclimate Modelling Intercomparison Project Phase II [PMIP](http://pmip2.lsce.ipsl.fr/)
+The Community Climate System Model, or CCSM [CCSM](https://www.ucar.edu/communications/CCSM/)
+worldclim
+
+### Soils data
+
+### Phytolith assemblage data
+
+
+# references

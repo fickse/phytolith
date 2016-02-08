@@ -1,0 +1,345 @@
+---
+title: "Total Phytolith Content"
+author: "Steve Fick"
+date: "September 10, 2015"
+output:
+  html_document: default
+  pdf_document: null
+  toc: yes
+---
+  
+  ** Response: Total phytolith content
+
+### Some Definitions
+  
+* **Phytolith** : Phytoliths are microscopic, weathering-resistant particles of
+silica formed in certain plant taxa that are released from decomposing
+litter and accumulate over time in the soil
+
+* **rondel_cells** : Exotic grasses only produce rondel-type phytoliths  
+
+* **bilobate cells** : only produced by proposed native bunch grasses (not produced by natives)  
+
+* **short cells ** : specialized silica accumulating cells found only in
+grasses. These strongly correlate to total phytolith mass (in evett 2013), indicating that most of the phytoliths produced were from grass cells.    
+
+* **total phytolith ** : Total mass of phytoliths.  Evett et al. (2012) proposed distinguishing sites with substantial long-term grass
+cover from other sites by using a ??? 0.3% soil phytolith weight threshold
+
+* **bilobate ratio ** : Percentage dominated by stipa and /or Danthonia
+
+* ***Stipa pulchra*** : Proposed dominant grass species in Central Valley  
+
+* ***Danthonia californica*** : proposed dominant grass in Coastal areas  
+
+
+```{r, include = FALSE, cache=FALSE}
+  
+  # some required packages
+  library(maps)
+  library(knitr)
+  library(raster)
+  library(dismo)
+  library(arm)
+  library(MASS)
+  library(glmnet)
+  library(randomForest)
+  library(rpart)
+  library(spdep)
+  library(xtable)
+  require(rpart.plot)
+```
+
+```{r setup, include = FALSE, cache=TRUE}
+ 
+  setwd('C:/projects/phytolith/')
+  
+  ### Basic Data Processing
+  
+  p <- read.csv('data/dat.csv', stringsAsFactors = F)
+  
+  # remove records with missing spatial information
+  p <- p[-which(is.na(p$lon)),]
+  
+  # reverse longitude
+  p$lon <- -1*p$lon
+  
+  # Grass threshold according to Evett and Bartolome
+  p$grass <- as.factor(p$phyto_content >= .3)
+  
+  # Had bilobate cells (only produced by PNG)
+  p$PNG <- as.numeric(p$bilobate_cells > 0)
+  
+  # fix bilob_ratio
+  p$bilob_ratio <- gsub('[*]','', p$bilob_ratio)
+  p$bilob_ratio <- as.numeric(p$bilob_ratio)
+  
+  # create a 'R::spatial' version of p
+  sp <- p
+  coordinates(sp) <- ~ lon + lat
+  
+  # create a distance matrix between points to consider spatial autocorrelation in models
+  dd <- as.matrix(as.dist(pointDistance(sp, lonlat = TRUE, allpairs=TRUE)))
+  dd.inv <- 1/dd
+  diag(dd.inv) <- 0
+  
+  
+  ### Load Covariates
+  
+  b <- brick('C:/projects/phytolith/data/predictors.grd')
+  mb <- brick('C:/projects/phytolith/data/mpredictors.grd')
+  ca <- shapefile('C:/Users/steve/Downloads/GEO2015/13/counties_2000.shp')
+  
+  # Extract covariates from location
+  X <- as.data.frame(extract(b, sp))
+  
+  # fix points which fall outside of slope raster
+  i <- which(is.na(X$slope))
+  X$slope[i] <- 0
+  X$northness[i] <- X$eastness[i] <-pi/2 
+  
+  ### Some further covariate processing
+  
+  # remove veg and hillshade columns
+  XX <- X[ , -which(names(X) %in% c('veg', 'hillshade'))]
+  
+  #only use pre-industrial bioclim variables
+  XX <- XX[ , -grep('bio[1-9]',names(XX))]
+  XX <- XX[ , -grep('bioclim_6',names(XX))]
+  XX <- XX[ , -grep('bioclim_4',names(XX))]
+  
+  #exclude some soil covariates which likely vary on short timescales / be highly correlated with bioclim variables
+  XX <- XX[ , -which(names(XX) %in% c('carbon','ph','cec'))]
+  
+  ### Load Functions
+  
+  source('code/functions.R')
+  
+  #################################################
+  #################################################
+  
+  # Total phytolith content (amount of grasses)
+  
+  
+  # identify response variable
+  XX$y <- log(1 + p[, 'total_phyto'])
+  depvarname <- 'total phytolith content'
+  
+  
+  f <- y ~ .  
+  xn <- which(names (XX) != 'y')
+  yn <- which(names(XX) == 'y')
+  
+  
+  # do an initial kfold cv to determine weighting scheme for ensemble
+  kf.results <- list()
+  for(i in 1:3){
+    cat(i);flush.console()
+    kf <- kfoldcv(f, XX, XX[,xn], XX[,yn], wts = NULL, k = 5, seed = i)
+    kf.results[[i]] <- kf$stats
+  }
+  
+  initial.kf <- kf.results <- Reduce('+', kf.results)/length(kf.results)
+  
+  # get weights for models 
+  wts <- getWts(kf.results[1:(nrow(kf.results)-1),'MSE'], low = TRUE)
+  
+  # now check kfold again, also inspecting the ensemble 
+  
+  kf <- kfoldcv(f, XX, XX[,xn], XX[,yn], wts = wts, k = 5, seed = 999)
+  second.kf <- kf$stats
+  
+  # fit the ensemble model
+  ens <- ensemble.fit(f, XX, XX[,xn],XX[,yn])
+  
+  # Make a prediction
+  p.ens <- ensemble.pred(ens, XX, XX[,xn], XX[,yn], wts = wts)
+  
+  # look at how tightly each model fits the data (random forest = very strong)
+  fitted.cors <- lapply(p.ens, function(x) cor(x,XX$y))
+  
+  # look for spatial autcorrelation in residuals
+  mor <- apply(p.ens-XX$y, 2, function(e) moran(e))
+  
+  # moran test of model residuals
+  moran.result <- sapply(mor, function(x) cbind(x$i, x$lowerp,x$upperp))
+  row.names(moran.result) <- c('I','lower P-value', 'upper P-value')
+  
+  moran.out <- xtable(t(moran.result))
+  
+  #correlation of model residuals
+  model.cors <- cor(XX$y-p.ens)
+```
+
+----
+
+# Model Validation
+
+## initial kfold
+```{r, echo = FALSE}
+library(knitr)
+kable(initial.kf)
+```
+
+## Second kfold
+```{r, echo = FALSE}
+kable(second.kf)
+```
+
+## Fitted correlations
+```{r, echo = FALSE}
+t(fitted.cors)
+```
+
+## Moran MC 
+```{r, echo = FALSE}
+t(fitted.cors)
+```
+
+## Model Correlations
+```{r, echo = FALSE}
+kable(model.cors)
+```
+
+----
+
+# Predictions
+
+
+### predictions
+
+```{r predictions, include = FALSE, cache = TRUE}
+  #random forest prediction
+	p.rf <- predict(mb, ens$RF)
+
+	#OLS prediction
+	p.ols <- predict(mb, ens$OLS)
+	
+	#CT prediction
+	p.ct <- predict(mb, ens$CT)
+
+	#ridge prediction
+	p.ridge <- predict.gnet(mb, ens$ridge)
+	
+	#lasso prediction
+	p.lasso <- predict.gnet(mb, ens$lass)
+	
+	#ensemble prediction
+	m.ens <- p.ols * wts['OLS'] + p.ct * wts['CT'] + p.rf * wts['RF'] + p.ridge* wts['ridge'] + p.lasso*wts['lass'] 
+	
+	# take out very extreme values
+	m.ens[m.ens > quantile(m.ens, .999)] <- quantile(m.ens, .999)
+
+```
+
+### Random Forest
+```{r echo = FALSE}
+
+### Surface Visualization
+
+  #random forest prediction
+	plot(exp(p.rf),  main = paste0('Predicted',depvarname,'\n(random forest)' )); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+```
+       
+       
+### CART 
+```{r echo = FALSE}
+plot(exp(p.ct),  main = paste0('Predicted',depvarname,'\n(CART)' )); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+```
+
+### Lasso 
+```{r echo = FALSE}
+plot(exp(p.lasso), main = paste0('Predicted',depvarname,'\n(lasso regression)' )); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+```
+     
+    
+### Ridge
+```{r echo = FALSE}
+plot(exp(p.ridge), main = paste0('Predicted',depvarname,'\n(ridge regression)' )); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+```
+### OLS
+```{r echo = FALSE}
+plot(exp(p.ols), main = paste0('Predicted',depvarname,'\n(OLS regression)' )); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+```
+### Ensemble
+```{r echo = FALSE}
+	plot(exp(m.ens), col = gray(100:1/100), main = paste0('Predicted',depvarname,'\n(Ensemble Model)' )); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+```
+
+----
+
+# Variable Importance
+
+### Random Forest
+```{r echo = FALSE}	
+	vn <- names(ens$RF$forest$xlevels)	
+	vn <- changeVarNames(vn)
+	varImpPlot(ens$RF , n.var = 10, labels = rev(vn[order(importance(ens$RF), decreasing = TRUE)][1:10]), main = paste0('Random Forest Variable Importance for', depvarname))
+```
+
+### Cart
+```{r echo = FALSE}	
+	X2 <- XX
+	names(X2) <-gsub('bioclim_400AD.', 'bio', names(X2))
+	names(X2) <-gsub("bio_preind.", 'bio', names(X2))
+	names(X2) <-gsub('bioclim_6kbp.', 'bio', names(X2))
+	names(X2) <- ifelse(!names(X2) %in% names(codex),names(X2), codex[names(X2)])
+	CT2 <- update(ens$CT, data = X2)
+
+	prp(CT2, varlen = 0, uniform = FALSE, main = paste0('CART results for ', depvarname))
+```
+
+### OLS
+```{r echo = FALSE}
+XX.scaled <- as.data.frame(scale(XX))
+	OLS.s <- update(ens$OLS, data = XX.scaled)
+	vn2 <- names(OLS.s$coefficients)
+  vn2 <- gsub('bioclim_400AD.', 'bio', vn2)
+  vn2 <- gsub("bio_preind.", 'bio', vn2)
+  vn2 <- gsub('bioclim_6kbp.', 'bio', vn2)
+
+  vn2 <- ifelse(!vn2 %in% names(codex),vn2, codex[vn2])
+
+  vn2[ which(vn2 == 'clay')] <- "clay content"
+  vn2[ which(vn2 == 'bulk')] <- "Bulk density"
+  vn2[ which(vn2 == 'alt')] <- "elevation"
+
+	coefplot(OLS.s, mar=c(1,15,5.1,2), varnames = vn2, main = paste0('Scaled OLS coefficients for', depvarname))
+```
+
+
+### scaled ridge regression coefplot
+```{r echo = FALSE}
+ridge.s = glmnet(as.matrix(XX.scaled[,xn]),XX.scaled[,yn],alpha =0,  lambda = cv.glmnet (as.matrix(XX.scaled[,xn]),XX.scaled[,yn],alpha =0)$lambda.min)
+    cf.r <- as.vector(ridge.s$beta)
+	vn.r <- changeVarNames(row.names(ridge.s$beta))
+	ord.r <- rev(order(abs(cf.r), decreasing = TRUE)[1:15])
+	dotchart(cf.r[ord.r], labels = vn.r[ord.r]); abline(v = 0, lty = 2, main = paste0('Scaled Ridge coefficients for', depvarname))
+```	
+	
+### scaled Lasso Coefplot
+```{r echo = FALSE}
+lasso.s = glmnet(as.matrix(XX.scaled[,xn]),XX.scaled[,yn],alpha =1,  lambda = cv.glmnet (as.matrix(XX.scaled[,xn]),XX.scaled[,yn],alpha =1)$lambda.min)
+	cf.l <- as.vector(lasso.s$beta)
+	vn.l <- changeVarNames(row.names(lasso.s$beta))
+	ord.l <- rev(order(abs(cf.l), decreasing = TRUE)[1:15])
+	dotchart(cf.l[ord.l], labels = vn.l[ord.l]); abline(v = 0, lty = 2, main = paste0('Scaled Lasso coefficients for', depvarname))
+```	
+	
+----
+# changes due to climate
+
+```{r echo = FALSE}
+
+
+
+```
+
+
+----
+
+```{r saveit}
+save(p, p.ct, ens, p.rf, p.ols, p.lasso, p.ridge, p.ens, file = paste0(depvarname,'.Rmd'))
+
+
+```

@@ -1,0 +1,324 @@
+---
+title: 'Changing Perspectives California Grassland Restoration: What was the prehistoric
+  distribution of Native grasses, what the current distribution, and how do they compare?'
+author: "Steve Fick"
+date: September 10, 2015
+bibliography: bibliography.bib
+output: 
+  pdf_document:
+    toc: true
+---
+  
+  <!--
+  
+  ToDo:
+  
+  [] Conceptual Hook:
+  [] Fit bioclimatic SDM under paleo-climate scenarios, and predict under current scenarios
+[] How does species distribution change
+[] What model(s) explain the most variation, and what variables seem to be important?
+
+[] model Eval
+[x] cross validation function
+[x] Spatial autocorrelation of residuals
+[] scaled predictors for interpretation
+
+[] Read Clary
+
+-->
+
+
+```{r setup, warning=FALSE, message = FALSE}
+library(maps)
+library(fields)
+library(raster)
+library(dismo)
+library(xtable)
+library(arm)
+
+setwd('C:/projects/phytolith/')
+
+p <- read.csv('data/dat.csv', stringsAsFactors = F)
+
+# remove records with missing spatial information
+p <- p[-which(is.na(p$lon)),]
+
+# reverse longitude
+p$lon <- -1*p$lon
+
+# Grass threshold according to Evett and Bartolome
+p$grass <- as.factor(p$phyto_content >= .3)
+
+# Had bilobate cells (only produced by PNG)
+p$PNG <- as.numeric(p$bilobate_cells > 0)
+
+# Choose the variable to be modeled. Here, I'm choosing phytolith content
+p$y <- p$phyto_content
+
+# fix bilob_ratio
+p$bilob_ratio <- gsub('*','', p$bilob_ratio)
+p$bilob_ratio <- as.numeric(p$bilob_ratio)
+
+sp <- p
+coordinates(sp) <- ~ lon + lat
+
+# create a distance matrix between points to consider spatial autocorrelation in models
+dd <- as.matrix(as.dist(pointDistance(sp, lonlat = TRUE, allpairs=TRUE)))
+dd.inv <- 1/dd
+diag(dd.inv) <- 0
+
+```
+
+
+```{r}
+# Covariates
+b <- brick('C:/projects/phytolith/data/predictors.grd')
+mb <- brick('C:/projects/phytolith/data/mpredictors.grd')
+ca <- shapefile('C:/Users/steve/Downloads/GEO2015/13/counties_2000.shp')
+
+# Extract from location
+X <- as.data.frame(extract(b, sp))
+
+
+
+i <- which(is.na(X$slope))
+X$slope[i] <- 0
+X$northness[i] <- X$eastness[i] <-pi/2 
+ 
+```
+
+```{r maps, cache =TRUE}
+
+  # Plot of sites
+  plot(mb$hillshade, col=grey(0:100/100),legend = FALSE, main = 'Phytolith Sample Locations')
+  plot(mb$alt, col = rainbow(25, alpha = .25), add=TRUE)
+  scalebar(200, divs = 4, below = 'km', type = 'bar')
+  points (sp, pch =3); points(sp[which(as.logical(p$bilobate_cells > 0)),], col = 'green', cex = 1.2)
+  legend('topright', col = c(1,'green'), pch =c(3,1), legend = c('sample location', 'Stipa / Danthonia detected'))
+
+```
+
+
+```{r formulae,  include = FALSE}
+
+library(MASS)
+library(glmnet)
+library(randomForest)
+library(rpart)
+
+
+ensemble.fit.bin <- function(f,dat,X,Y){
+  list(
+    OLS = stepAIC(glm(f, data = dat, family = 'binomial'), trace = 0),
+    CT = rpart(f, data =dat),
+    RF = randomForest(f, data = dat, ntree=2000, mtry = 2)#,
+   # ridge = glmnet(as.matrix(X),Y,alpha =0,  lambda = cv.glmnet (as.matrix(X),Y,alpha =0)$lambda.min),
+    #lass = glmnet( as.matrix(X),Y,alpha =1, lambda =  cv.glmnet (as.matrix(X),Y,alpha =1)$lambda.min )
+  )
+}
+
+
+ensemble.pred.bin <- function(ens, ndata, nX, nY, wts = NULL){
+   with( ens, {
+          d <- data.frame(
+            #OLS = predict(OLS, ndata),
+            CT = predict(CT, ndata),
+            RF = predict(RF, ndata)#,
+            #ridge = as.vector(predict(ridge, as.matrix(nX))),
+            #lass = as.vector(predict(lass, as.matrix(nX)))
+            )
+         # if (is.null(wts)) d$ens <- rowMeans(d) else d$ens <- apply(d, 1, function(x) sum(x*wts))
+          d
+          })
+  }
+
+```
+
+
+```{r model selection, include = FALSE, cache = TRUE}
+
+# Data
+  XX <- X[ , -which(names(X) %in% c('veg', 'hillshade'))]
+  
+  #only use preindustrial bioclim variables
+  XX <- XX[ , -grep('bio[1-9]',names(XX))]
+  XX <- XX[ , -grep('bioclim_6',names(XX))]
+  XX <- XX[ , -grep('bioclim_4',names(XX))]
+
+  #exclude some soil covariates which likely vary on short timescales
+  XX <- XX[ , -which(names(XX) %in% c('carbon','ph','cec'))]
+
+
+
+# Choose response variable
+  XX$y <- as.factor(p[, 'bilobate_cells'] > 0)
+
+
+add.Psuedoabsence <- FALSE
+
+if( add.Psuedoabsence){
+
+  XX2 <- as.data.frame(sampleRandom(b, 1000, ext = extent(sp)))
+  XX2$y <- as.factor(FALSE)
+  XX2 <- XX2[ , -which(names(XX2) %in% c('veg', 'hillshade'))]
+  
+  #only use 400AD bioclim variables
+  XX <- XX[ , -grep('bio[1-9]',names(XX))]
+  XX2 <- XX2[ , -grep('bioclim_6',names(XX2))]
+  XX2 <- XX2[ , -grep('bioclim_4',names(XX2))]
+
+  #exclude some soil covariates which likely vary on short timescales
+  XX2 <- XX2[ , -which(names(XX2) %in% c('carbon','ph','cec'))]
+
+
+  XX <- rbind(XX2,XX)
+}
+
+
+
+  f <- y ~ .  
+  xn <- which(names (XX) != 'y')
+  yn <- which(names(XX) == 'y')
+
+
+  
+  ens <- ensemble.fit(f, XX, XX[,xn],XX[,yn])
+  p.ens <- ensemble.pred(ens, XX, XX[,xn], XX[,yn])
+  
+```
+
+
+```{r dismo, cache= TRUE, include = FALSE}
+# predictions
+
+#random forest prediction
+p.rf <- predict(mb, ens$RF, type = 'prob', progress = 'text')
+
+
+#OLS prediction
+p.ols <- predict(mb, ens$OLS, type = 'response')
+#plot(exp(p.ols))
+
+#CT prediction
+p.ct <- predict(mb, ens$CT)
+
+
+m <- mean(p.ols,p.rf, p.ct)
+
+m.ens <- p.ols * .33 + (1-p.ct) * .33 + (1-p.rf) * .33 
+
+```
+
+
+```{r}
+
+# Random Forest 
+# png("C:/projects/phytolith/out/fig/biolob_presence_400AD_randforest.png", width = 1000, height = 1200)
+  plot(1-p.rf,  main = 'Predicted N. pulchra/danthonia presence \n(random forest)' ); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+# dev.off()
+
+#TREE
+# png("C:/projects/phytolith/out/fig/biolob_presence_400AD_CART.png", width = 1000, height = 1200)
+  plot(1-p.ct,  main = 'Predicted N. pulchra/danthonia presence \n(CART)' ); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+# dev.off()
+
+# OLS
+# png("C:/projects/phytolith/out/fig/bilob_presence_400AD_OLS.png", width = 1000, height = 1200)
+  plot(p.ols, main = 'Predicted N. pulchra/danthonia presence \n(OLS regression)' ); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+# dev.off()
+
+
+# png("C:/projects/phytolith/out/fig/bilob_presence_400AD_ensemble.png", width = 1000, height = 1200)
+
+  plot(m.ens, col = gray(100:1/100), main = 'Predicted N. pulchra/danthonia presence  \n(Ensemble Model)' ); plot(ca, add=TRUE, border = rgb(0,0,0,.1))
+
+# dev.off()
+
+
+```
+
+
+```{r vimp}
+codex <- c(
+ bio1 = "Annual Mean Temperature",
+ bio2 = "Mean Diurnal Range (Mean of monthly (max temp - min temp))",
+ bio3 = "Isothermality (bio2/bio7) (  100)",
+ bio4 = "Temperature Seasonality (standard deviation  100)",
+ bio5 = "Max Temperature of Warmest Month",
+ bio6 = "Min Temperature of Coldest Month",
+ bio7 = "Temperature Annual Range (bio5-bio6)",
+ bio8 = "Mean Temperature of Wettest Quarter",
+ bio9 = "Mean Temperature of Driest Quarter",
+ bio10 = "Mean Temperature of Warmest Quarter",
+ bio11 = "Mean Temperature of Coldest Quarter",
+ bio12 = "Annual Precipitation",
+ bio13 = "Precipitation of Wettest Month",
+ bio14 = "Precipitation of Driest Month",
+ bio15 = "Precipitation Seasonality (Coefficient of Variation)",
+ bio16 = "Precipitation of Wettest Quarter",
+ bio17 = "Precipitation of Driest Quarter",
+ bio18 = "Precipitation of Warmest Quarter",
+ bio19 = "Precipitation of Coldest Quarter" )
+
+vn <- names(ens$RF$forest$xlevels)
+vn <- gsub('bioclim_400AD.', 'bio', vn)
+vn[ match(names(codex), vn) ] <- codex
+vn[ which(vn == 'clay')] <- "Clay content"
+vn[ which(vn == 'bulk')] <- "Bulk density"
+vn[ which(vn == 'alt')] <- "Elevation"
+
+# png("C:/projects/phytolith/out/fig/bilob_presence_rf_vimp.png", width = 1000, height = 600)
+  varImpPlot(ens$RF ,  labels = rev(vn[order(importance(ens$RF), decreasing = TRUE)]), main = 'Random Forest Variable Importance (N. pulchra presence)')
+# dev.off()
+
+
+# CART plot
+require(rpart.plot)
+X2 <- XX
+names(X2) <-gsub('bioclim_400AD.', 'bio', names(X2))
+names(X2) <- ifelse(!names(X2) %in% names(codex),names(X2), codex[names(X2)])
+CT2 <- update(ens$CT, data = X2)
+
+# png("C:/projects/phytolith/out/fig/total_phyto_distribution_CT_tree.png", width = 1000, height = 1000)
+  prp(CT2, varlen = 0, uniform = TRUE, main = 'CART results for phytolith content')
+# dev.off()
+
+
+# scaled OLS coefplot
+
+XX.scaled <- as.data.frame(scale(XX[,-which(names(XX)=='y')]))
+XX.scaled$y <- XX$y
+OLS.s <- update(ens$OLS, data = XX.scaled)
+vn2 <- names(OLS.s$coefficients)
+vn2 <- gsub('bioclim_400AD.', 'bio', vn2)
+vn2 <- ifelse(!vn2 %in% names(codex),vn2, codex[vn2])
+
+vn2[ which(vn2 == 'clay')] <- "clay content"
+vn2[ which(vn2 == 'alt')] <- "elevation"
+
+coefplot(OLS.s, mar=c(1,15,5.1,2), varnames = vn2)
+
+
+
+```
+
+# Methods
+
+## 1. Data
+
+
+### phytolith data
+Phytolith data was taken from [@evett_phytolith_2013]. 
+
+### Climate data
+
+Paleoclimate Modelling Intercomparison Project Phase II [PMIP](http://pmip2.lsce.ipsl.fr/)
+The Community Climate System Model, or CCSM [CCSM](https://www.ucar.edu/communications/CCSM/)
+worldclim
+
+### Soils data
+
+### Phytolith assemblage data
+
+
+# references

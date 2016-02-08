@@ -1,0 +1,650 @@
+---
+title: "Grass in California : Phytolith analysis"
+author: "Steve Fick"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    theme: "spacelab"
+    toc: true
+---
+ 
+<!--
+ 
+ToDo:
+
+
+[] Conceptual Hook:
+  [] Fit bioclimatic SDM under paleo-climate scenarios, and predict under current scenarios
+  [] How does species distribution change
+  [] What model(s) explain the most variation, and what variables seem to be important?
+
+[] model Eval
+  [x] cross validation function
+  [x] Spatial autocorrelation of residuals
+  [] scaled predictors for interpretation
+
+[] Read Clary
+
+-->
+# Intro
+It has been traditionally assumed that prior to European colonization, California grasslands were dominated by native, perennial bunch-grasses (clements). As a result, most ecological restoration in these areas, which are now dominated by annual exotic grasses and forbs, has focused on (re)introducing a native perennial grass component to these communities. New evidence from soil phytoliths records (silcate deposits generated over millenia by grasses) and re-evaluations of historical accounts have called this fundamental assumption into question. It has been hypothesized that perhaps perrenial bunchgrasses composed a minor component of pre-columbian communities, if at all. 
+
+Using a published dataset of phytolith assemblages across the state (a proxy for pre-historic grass abundance) 
+here I attempt to model the pre-columbian distribution of native grasses. For predictors, I am using downscaled late holocene projections from global climate models (GCMs), elevation and soil characteristics.  
+ 
+ 
+****
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+
+## The dataset
+
+Data is from:  
+  
+>Evett, Rand R., and James W. Bartolome. "Phytolith evidence for the extent and nature of prehistoric Californian grasslands." The Holocene 23.11 (2013): 1644-1649.
+
+
+
+```{r setup, warning=FALSE, message = FALSE}
+library(maps)
+library(fields)
+library(raster)
+library(dismo)
+library(xtable)
+
+setwd('C:/projects/phytolith/')
+p <- read.csv('data/dat.csv', stringsAsFactors = F)
+p <- p[-which(is.na(p$lon)),]
+p$lon <- -1*p$lon
+
+p$grass <- as.factor(p$phyto_content >= .25)
+p$y <- p$phyto_content
+# p$y <- log(p$phyto_content)
+# p$y[which(!is.finite(p$y))] <- min(p$y[-which(!is.finite(p$y))])#min(p$y)
+
+p$bilob_ratio <- gsub('*','', p$bilob_ratio)
+p$bilob_ratio <- as.numeric(p$bilob_ratio)
+#summary(p)
+
+sp <- p
+coordinates(sp) <- ~ lon + lat
+dd <- as.matrix(as.dist(pointDistance(sp, lonlat = TRUE, allpairs=TRUE)))
+dd.inv <- 1/dd
+diag(dd.inv) <- 0
+
+
+ext <- new("Extent"
+
+    , xmin = -125.352614639443
+    , xmax = -113.109333543521
+    , ymin = 31.5300559773918
+    , ymax = 43.4376100891511
+)
+
+```  
+
+
+
+
+```{r inputs, cache=TRUE}
+# get covariates
+
+# extract current climate information
+#getData('worldclim', var = "bio", res = 2.5, path = "C:/data/clim/wc2-5/bio/")
+bio <- stack( list.files ("C:/data/clim/wc2-5/bio/wc2-5", full = TRUE, pattern = 'bil$') ) 
+bio <- crop(bio,ext)
+b <- as.data.frame(extract(bio, p[,c('lon','lat')]))
+p <- cbind(p,b)
+
+
+# extract 4th century  climate information (600 bp)
+bio6c <- stack('C:/projects/phytolith/data/bioclim_600pb.tif')
+b6c <- as.data.frame(extract(bio6c, p[,c('lon','lat')]))
+p <- cbind(p,b6c)
+
+
+# extract mid holocene climate information (6000 bp)
+bio6k <- stack('C:/projects/phytolith/data/bioclim_6kpb.tif')
+b6k <- as.data.frame(extract(bio6k, p[,c('lon','lat')]))
+p <- cbind(p,b6k)
+
+
+# extract soil information
+soil <- stack('C:/data/soil/soilgrids/ca/aggregated/ca_soil.grd')
+soi <- as.data.frame(extract(soil, p[,c('lon','lat')]))
+p <- cbind(p, soi)
+soilnames <- names(soil)
+
+# extract current landform type?
+veg <- raster("C:/data/veg/calveg.grd")
+veg <- as.factor(round(veg))
+vg <- as.data.frame(extract(veg, p[, c('lon','lat')]))
+names(vg) <- 'veg'
+p<- cbind(p, vg)
+
+# get a mask of california for plotting results
+mask <- shapefile('C:/Users/steve/Downloads/GEO2015/13/counties_2000.shp')
+mask <- spTransform(mask, CRS(projection(bio)))
+
+
+# extract elevation
+alt <- raster("C:/data/elev/wc_elev30_land.tif")
+
+# extract slope
+
+slope <- crop(alt, bios)
+slope <- terrain(slope, unit = 'degrees')
+p$slope <- extract(slope,sp)
+p$slope[which(is.na(p$slope))] <- 0
+
+# create brick for predictions
+bios <- stack(bio, bio6c, bio6k)
+bios <- crop(bios, ext)
+calt <- crop(alt, bios)
+calt <- aggregate(calt, 5)
+cs <- aggregate(slope, 5)
+
+#extract log distance to coast
+dcoast <- is.na(calt)
+dcoast[dcoast==0] <- NA
+dcoast <- distance(dcoast)
+dcoast <- log(dcoast)
+dc <- as.data.frame(extract(dcoast, p[,c('lon','lat')]))
+p <- cbind(p,dc)
+names(p)[length(names(p))]<- 'dcoast'
+
+#create predictors 
+csoil <- crop(soil, bios)
+csoil <- aggregate(csoil, 5)
+
+predictors <- stack( calt,cs, csoil, bios, dcoast)
+
+names(predictors)[1] <- 'elev'
+names(predictors)[2] <- 'slope'
+names(predictors)[length(names(predictors))]<- 'dcoast'
+
+
+p.scaled <- as.data.frame(scale ( p [ , which(! names(p) %in% c('id', 'series','county','series_area', 'Stipa_Danth_dominant', 'grass', 'veg') )] ))
+
+
+```
+
+
+
+Heres a look at the table ...
+
+```{r summary-table}
+
+summary(sp@data)
+
+```
+### Some Definitions
+  
+* **Phytolith** : Phytoliths are microscopic, weathering-resistant particles of
+silica formed in certain plant taxa that are released from decomposing
+litter and accumulate over time in the soil
+
+* **rondel_cells** : Exotic grasses only produce rondel-type phytoliths  
+
+* **bilobate cells** : only produced by proposed native bunch grasses (not produced by natives)  
+
+* **short cells ** : specialized silica accumulating cells found only in
+grasses. These strongly correlate to total phytolith mass (in evett 2013), indicating that most of the phytoliths produced were from grass cells.    
+
+* **total phytolith ** : Total mass of phytoliths.  Evett et al. (2012) proposed distinguishing sites with substantial long-term grass
+cover from other sites by using a ??? 0.3% soil phytolith weight threshold
+
+* **bilobate ratio ** : Percentage dominated by stipa and /or Danthonia
+
+* ***Stipa pulchra*** : Proposed dominant grass species in Central Valley  
+
+* ***Danthonia californica*** : proposed dominant grass in Coastal areas  
+
+
+```{r coefplot}
+plot(sp@data[,5:12])
+```
+As mentioned in the text, total phytolith content is highly correlated with rondel_cells, indicating that most of the phytoliths are from native grasses, rather than exotics. Phytolith content is also highly correlated with total phytolith, further emphasizing that most of the phytolith signal is coming from grass. 
+
+
+
+### visualizing
+
+```{r state-plot}
+plot(mask, border = rgb(0,0,0,.5), main = 'Phytolith sample locations \nfrom Evett and Bartolome 2013')
+points(sp)
+points(sp[which(as.logical(p$grass)),], col = 'green', cex = 1.2)
+```
+green circles indicate locations where phytolith content surpasses the .3 percent threshold mentioned in the text, indicating a high likelihood of substantial grass presence. Notice that most of the samples do not meet this criteria.  
+n = `r nrow(p)`  
+
+
+****
+
+
+****
+
+
+#Modeling
+
+
+```{r helperfunctions}
+# helper functions
+
+# inspection for autocorrelation in model
+  moran <- function(model, d = dd.inv) {
+    require(spdep)
+    m <- model.frame(model)
+    f <- formula(m)  
+    resp.name <- all.vars(f)[1]
+    resids <- predict(model) - m[,resp.name]
+  
+    
+    mat <- mat2listw(d)  
+    lower <- moran.mc(resids, mat, 999, alternative = 'less')$p.value
+    upper <- moran.mc(resids, mat, 999)
+    return(list ( upperp = upper$p.value, lowerp = lower, i = upper$statistic, res = upper$res))
+  }
+
+# perform k-fold cross validation
+kfoldcv <- function(model, seed=77, k = 5){
+  require(dismo)
+  m <- model.frame(model)
+  f <- formula(m)
+  set.seed(seed)
+  i <- kfold(m, k = k)
+  
+  m$prediction <- NA
+  
+  for (j in 1:k){
+   # cat( '\r', j , ' / ', k); flush.console()
+    train <- which(i != j)
+    test <- which( i == j)
+    fit <- update(model, data = m[train,])
+    m$prediction[test] <- predict(fit, m[test,])        
+  }
+
+  resp.name <- all.vars(f)[1]
+  COR <- cor( m[,resp.name], m$prediction)
+  Err <-  m$prediction- m[,resp.name]
+  SSE <- sum(Err ^ 2)
+  MSE <- mean (Err ^2) 
+  MAE <- mean(abs(Err))
+  ME <- mean(Err)
+  RMSE <- sqrt(MSE)
+  mor <- moran(model)
+  
+  
+  return( list( stats = cbind('cor'= COR, 'SSE' = SSE, 'MSE' = MSE, 'RMSE' = RMSE, 'ME' = ME, 'MAE' = MAE, "moran lower" = mor$lowerp,  'moran upper' = mor$upperp ), data = m))
+  }
+  
+
+  plot.moran <- function(m){
+    hist(m$res, main = '');abline(v = m$i, col = 'red', lty = 2)
+    legend('topright', legend = paste0('I > random;  p = ', m$upperp))
+    legend('topleft', legend = paste0('I < random;  p = ', m$lowerp))
+  }
+```
+
+```{r formulae}
+
+# formulae
+
+# modern
+f <- as.formula( paste0("y ~ slope + elev + dcoast + ",(paste(c(paste0('bio',1:18)
+                                                          #, soilnames
+                                                          ), collapse= ' + '))))
+
+f.soil <-   as.formula( paste0("y ~ slope + elev +dcoast + ",(paste(c(paste0('bio',1:18)
+                                                          , soilnames
+                                                          ), collapse= ' + '))))
+
+# 400 AD
+f400 <- as.formula( paste0("y ~ slope +elev + dcoast +  ",(paste(c(paste0("bioclim_600pb.",1:18)
+                                                             #, soilnames
+                                                             ), collapse= ' + '))))
+f400.soil <- as.formula( paste0("y ~ slope +elev + dcoast +  ",(paste(c(paste0("bioclim_600pb.",1:18)
+                                                             , soilnames
+                                                             ), collapse= ' + '))))
+
+
+# 6000 BC 
+f6k <- as.formula( paste0("y ~ slope +elev + dcoast + ",(paste(c(paste0("bioclim_6kpb.",1:18)
+                                                            #, soilnames
+                                                            ), collapse= ' + '))))
+f6k.soil <- as.formula( paste0("y ~ slope +elev + dcoast + ",(paste(c(paste0("bioclim_6kpb.",1:18)
+                                                            , soilnames
+                                                            ), collapse= ' + '))))
+```
+
+```{r OLS}
+### simple OLS
+
+library(MASS)
+library(arm)
+  
+# regressing total phytolith on covariates
+
+  OLS <- lm(f, data = p)
+  OLS.i <- lm(f, data = p.scaled)
+  OLS <- stepAIC(OLS, trace =0)
+  OLS.i <- stepAIC(OLS.i, trace =0)
+  
+  OLS.soil <- lm(f.soil, data = p)
+  OLS.soil.i <- lm(f.soil, data = p.scaled)
+  OLS.soil <- stepAIC(OLS.soil, trace =0)
+  OLS.soil.i <- stepAIC(OLS.soil.i, trace =0)
+  
+  OLS4 <- lm(f400, data = p)
+  OLS4 <- stepAIC(OLS4, trace = 0)  
+  OLS4.i <- lm(f400, data = p.scaled)
+  OLS4.i <- stepAIC(OLS4.i, trace = 0)
+  
+  OLS4.soil <- lm(f400.soil, data = p)
+  OLS4.soil <- stepAIC(OLS4.soil, trace = 0)  
+  OLS4.soil.i <- lm(f400.soil, data = p.scaled)
+  OLS4.soil.i <- stepAIC(OLS4.soil.i, trace = 0)
+  
+  OLS6 <- lm(f6k, data = p)
+  OLS6 <- stepAIC(OLS6, trace = 0)
+  OLS6.soil <- lm(f6k.soil, data = p)
+  OLS6.soil <- stepAIC(OLS6.soil, trace = 0)
+
+```
+
+
+
+
+```{r CART, eval = TRUE, cache= TRUE}
+###CART
+
+
+library(rpart)
+CT <- rpart(f, data = p)
+#plot(CT)
+#text(CT)
+
+
+CT4 <- rpart(f400, data = p)
+#plot(CT4)
+#text(CT4)
+
+
+CT6 <- rpart(f6k, data = p)
+#plot(CT6)
+#text(CT6)
+
+```
+
+
+```{r randomforest, eval= TRUE, cache = TRUE}
+###Random Forest
+
+
+  library(randomForest)
+  
+  RF <- randomForest(f, data = p, ntree=1000)
+  RF.soil <- randomForest(f.soil, data = p, ntree=1000)
+
+#  varImpPlot(RF)
+  
+  RF4 <- randomForest(f400, data = p, ntree=1000)
+  RF4.soil <- randomForest(f400.soil, data = p, ntree=1000)
+#  varImpPlot(RF4)
+
+
+  RF6 <- randomForest(f6k, data = p, ntree=1000)
+  RF6.soil <- randomForest(f6k.soil, data = p, ntree=1000)
+#  varImpPlot(RF6)
+
+# 
+#   RF.res <- predict(RF) - p$phyto_content
+#   plot(sp, cex = abs(scale(RF.res)), pch = 1, col = 3 + sign(RF.res)  )
+#   map('state', add=TRUE)
+
+```
+
+
+
+
+```{r CARET, eval = TRUE, cache = TRUE}
+###CARET ENSEMBLE
+library(caretEnsemble)
+myControl <- trainControl(method = 'cv', number = 5, returnResamp='all')
+
+ens <- caretEnsemble(caretList(f, data = p, trControl = myControl, methodList = c('glm', 'rf','lasso', 'ridge')))
+ens4 <- caretEnsemble(caretList(f400, data = p, trControl = myControl, methodList = c('glm', 'rf','lasso', 'ridge')))
+ens6 <- caretEnsemble(caretList(f6k, data = p, trControl = myControl, methodList = c('glm', 'rf','lasso', 'ridge')))
+
+
+```
+
+
+```{r GAM}
+
+###GAM
+
+```
+
+```{r MAXENT}
+
+###MAXENT
+
+
+```
+Several model formulations and modeling methods were tried.  
+Modeling methods included:  
+
+* Ordinary Least Squares (OLS/GLM), with step-wise backward selection using AIC
+* Random Forest
+* Classification and Regression Trees
+* An ensemble model, including previous methods as well as ridge regression and lasso regression
+
+For each method, 3 model formulations were explored : one using current climate data, one using downscaled [CCSM] climate projections for 400 AD, and one using mid-holocene projections (~6000 bp).
+Total Phytolith content was modeled as a function of climate, elevation, and linear distance from coast. Additionally, soil variables including Soil Carbon, clay, sand, silt, CEC, bulk density, coarse fragment, and pH were included as predictors in the models to see if they improved fit. Soil data was extracted from the [ISRIC 1-km resolution soilgrids] dataset.   
+
+[CCSM]: https://www.ucar.edu/communications/CCSM/
+[ISRIC 1-km resolution soilgrids]: http://soilgrids.org/
+
+## Model Evaluation
+
+Here are the results of 5-fold cross validation, including correlation, 
+
+```{r evals, cache = TRUE, eval = TRUE}
+
+  to.ev <- list( 
+    "OLS.curent" = OLS,
+    "OLS.400AD" = OLS4,
+    "OLS.6kbp" = OLS6,
+    
+    "OLS.soil.cur" = OLS.soil,
+    "OLS.soil.400" = OLS4.soil,
+    "OLS.soil.6kbp" = OLS6.soil,
+    
+#    "RT" = CT,
+    
+    "RF.cur" = RF,
+    "RF.400AD" = RF4,
+    "RF.6kbp" = RF6,
+    "RF.soil.cur" = RF.soil,
+    "RF.soil.400AD" = RF4.soil,
+    "RF.soil.6kbp" = RF6.soil
+    )
+
+  kf  <- lapply(to.ev, kfoldcv) 
+
+  results <- do.call(rbind, lapply(kf, function(x) x$stats))
+  row.names(results) <- names(to.ev)
+  results
+
+```
+
+
+And results from the ensemble method: 
+
+```{r ENS}
+summary(ens)
+```
+
+* Pretty clearly, Ordinary least squares using current climate has the highest cross-validation correlation, indicating that it is the 'best' model in terms of predictive accuracy. There is little indication of spatial autocorrelation in the residuals for this model (p values for moran lower and moran upper), which suggests that the predictors used in the model are doing a pretty good job at explaining the spatial pattern in the response. 
+It is noteable that there is an overal negative bias in residuals, indicating that the model has a tendency to undershoot. 
+
+* Adding soils as covariates had a very modest effect on predictive accuracy.
+
+Lets visualize the results
+
+## Model Predictions
+
+### Distribution of grasses based on climate of 400 AD
+
+
+```{r rfp, cache = TRUE, eval = TRUE}
+
+# find predictions for 1600 bp and 600 bp
+OLSp400 <- predict(predictors, OLS4, xyOnly = FALSE)
+OLSp6k <- predict(predictors, OLS6, xyOnly = FALSE)
+
+#use current climate estimates as inputs for the model
+pred2 <- predictors 
+pred2 <- pred2[[-which(names(pred2) %in% paste0('bioclim_600pb.',1:19))]]
+pred3 <- pred2[[-which(names(pred2) %in% paste0('bioclim_6kpb.',1:19))]]
+#names(pred2)[which(names(pred2) %in% paste0('bio',1:19))] <- paste0('bioclim_600pb.',1:19)
+names(pred2) <- gsub('bio', 'bioclim_600pb.', names(pred2))
+names(pred3) <- gsub('bio', 'bioclim_6kpb.', names(pred3))
+
+#get current predictions using ancient climate
+OLSp400.cur <- predict(pred2, OLS4, xyOnly = FALSE)
+OLSp6k.cur <- predict(pred3, OLS6, xyOnly = FALSE)
+```
+
+```{r prediction-plots}
+OLSp400[exp(OLSp400)>1] <-log(1)
+plot(mask(exp(OLSp400), mask), main = '400 AD phytolith content (likelihood of grasses)\n excluding soils')
+plot(mask(exp(OLSp400)>.3, mask), main = 'Thresholded 400 AD distribution of grass \nbased on phytoliths and climate')
+```
+Seems like the coast and a region of the center-East and North Central valley are the most favorable.
+Thresholding clearly reveals that there is very little evidence for central valley occupation based on this phytolith evidence. 
+
+```{r prediction-plots2}
+OLSp400.soil <- predict(predictors, OLS4.soil, xyOnly = FALSE)
+plot(mask(exp(OLSp400.soil), mask), main = '400 AD phytolith content (likelihood of grasses) \n INCLUDING soils in predition')
+
+```
+
+
+### Change in suitability, using climate of today and model of 400 AD
+
+```{r today}
+e <- new("Extent"
+    , xmin = -124.60695783708
+    , xmax = -115.610736555942
+    , ymin = 32.1437146892656
+    , ymax = 42.1940324858757
+)
+
+#plot(mask(exp(OLSp400.cur), mask), main = 'Projected current distribution based on change in climate')
+
+delta <- exp(OLSp400.cur)- exp(OLSp400)
+plot(crop(mask(exp(OLSp400.cur)- exp(OLSp400), mask),e), main ='predict change in phytolith content based on todays climate')
+```
+The coasts appear to have become less favorable, perhaps due to hotter/drier conditions there? (double check gcm predictions)
+
+## interpretations
+
+Based on the fitted model for OLS, Here are the important variables (as determinted by stepwise AIC) for the response...
+
+```{r codex}
+ codex <- c(
+ bio1 = "Annual Mean Temperature",
+ bio2 = "Mean Diurnal Range (Mean of monthly (max temp - min temp))",
+ bio3 = "Isothermality (bio2/bio7) (  100)",
+ bio4 = "Temperature Seasonality (standard deviation  100)",
+ bio5 = "Max Temperature of Warmest Month",
+ bio6 = "Min Temperature of Coldest Month",
+ bio7 = "Temperature Annual Range (bio5-bio6)",
+ bio8 = "Mean Temperature of Wettest Quarter",
+ bio9 = "Mean Temperature of Driest Quarter",
+ bio10 = "Mean Temperature of Warmest Quarter",
+ bio11 = "Mean Temperature of Coldest Quarter",
+ bio12 = "Annual Precipitation",
+ bio13 = "Precipitation of Wettest Month",
+ bio14 = "Precipitation of Driest Month",
+ bio15 = "Precipitation Seasonality (Coefficient of Variation)",
+ bio16 = "Precipitation of Wettest Quarter",
+ bio17 = "Precipitation of Driest Quarter",
+ bio18 = "Precipitation of Warmest Quarter",
+ bio19 = "Precipitation of Coldest Quarter" )
+
+
+cc <- names(coef(OLS4))
+cc <- gsub('bioclim_600pb.', 'bio', cc)
+k <- match(cc, names(codex))
+j <- which(!is.na(k))
+cc[j] <- codex[k[j]]
+
+
+coefplot(OLS4.i, varnames = cc, mar = c(1,11,5.1,2), main= '(scaled) variable importance')
+
+
+```  
+
+Here is the same, but including soil predictors
+```{r}
+cc <- names(coef(OLS4.soil.i))
+cc <- gsub('bioclim_600pb.', 'bio', cc)
+
+k <- match(cc, names(codex))
+j <- which(!is.na(k))
+cc[j] <- codex[k[j]]
+
+
+coefplot(OLS4.soil, varnames = cc, mar = c(1,11,5.1,2), main= '(scaled) variable importance')
+
+```
+
+There is clearly a positive relationship with soil carbon, as well as a few other variables.
+
+
+# Conclusions
+
+* As concluded in Evett and Bartolome 2013, there is little evidence for much pre-historic grass occupation in the central valley *given this phytolith dataset* and *assumptions about the connection between phytolith content and grass occupation*
+
+* Models fit using projected pre-historic climate predict a general decrease in favorability for grasses under current climates, especially on the coast. I need to figure out what change is driving this
+
+* When soils are added as covariates, there tend to be some significant relationships with phytolith content.
+
+# Improvements
+
+* Generate a dataset of *current* native grass distributions throughout the state and see how these compare with phytolith projections
+
+* better analysis of relative importance measures for different covariates
+
+* use ensemble model for predictions.
+
+```{r}
+library(caret)
+library(caretEnsemble)
+
+
+ctr <- trainControl(method = 'cv', number = 5, returnResamp='all')
+methods <- c('glm', 'rf','lasso', 'ridge')
+
+rf.grid <- data.frame(mtry = 2:6)
+c.rf <- train(f, data = X, method = 'rf',importance = TRUE, tuneGrid = rf.grid)
+
+c.glm <- train(f, data = X, method = 'glm')
+
+c.ridge <- train(f, data = X, method = 'ridge', tuneLength=10)
+
+c.lasso <- train(f, data = X, method = 'lasso', tuneLength=10)
+
+m1 <- caretList(c.rf, c.glm, c.ridge, c.lasso)
+m1 <- caretList(f, data = X,importance = TRUE,   trControl = ctr, methodList = methods)
+ens <- caretEnsemble(m1)
+varImp(ens)
+
+```
+
