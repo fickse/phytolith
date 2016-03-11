@@ -9,6 +9,9 @@ j <- read.csv('C:/projects/phytolith/data/raw/clary_transects_slope_aspect.csv',
 
 names(j) <- c("site", "Unit", "disturbance", "slope", "aspect", "unk1", "unk2", "% WARM SEASON PPT")
 
+# move point on border
+a$Long[49] <- -120.8882
+
 # merge
 
 # in same order, just moving columns from j to a
@@ -26,27 +29,37 @@ ca <- shapefile('C:/Users/steve/Downloads/GEO2015/13/counties_2000.shp')
 sp <- a
 coordinates(sp) <- ~Long + Latitude
 
+
+# extract fine-scale slope and aspect
+topo <- stack('C:/projects/phytolith/data/processed/fine_topo.grd')
+e.topo <- as.data.frame( extract( topo, sp))
+
+
 e <- as.data.frame(extract(b, sp))
 
 
 # some points on the slope dont have hillshade, slope, northness and eastness
 
-nas <- which( apply(e,1, function(x) any(is.na(x))))
+		# nas <- which( apply(e,1, function(x) any(is.na(x))))
 
-slope2 <- focal(b[['slope']], matrix(1, 7,7), fun = mean, na.rm=TRUE)
-e[nas,'slope'] <- extract(slope2, sp[nas,])
+		# slope2 <- focal(b[['slope']], matrix(1, 7,7), fun = mean, na.rm=TRUE)
+		# e[nas,'slope'] <- extract(slope2, sp[nas,])
 
-x <- focal(b[['northness']], matrix(1, 5,5), fun = mean, na.rm=TRUE)
-e[nas,'northness'] <- extract(x, sp[nas,])
+		# x <- focal(b[['northness']], matrix(1, 5,5), fun = mean, na.rm=TRUE)
+		# e[nas,'northness'] <- extract(x, sp[nas,])
 
-x <- focal(b[['eastness']], matrix(1, 5,5), fun = mean, na.rm=TRUE)
-e[nas,'eastness'] <- extract(slope2, sp[nas,])
+		# x <- focal(b[['eastness']], matrix(1, 5,5), fun = mean, na.rm=TRUE)
+		# e[nas,'eastness'] <- extract(slope2, sp[nas,])
 
-e[15,'slope'] <- 0 # bodega
-e[15,'northness'] <- 2.7 # bodega
-e[15,'eastness'] <- 2.7 # bodega
+		# e[15,'slope'] <- 0 # bodega
+		# e[15,'northness'] <- 2.7 # bodega
+		# e[15,'eastness'] <- 2.7 # bodega
 
-a <- cbind(a, e)
+		
+e$slope <- e$northness <- e$eastness <- NULL
+e <- cbind(e.topo, e)
+a <- cbind(z,e)
+a$dcoastkm <- a$dcoast/1000	
 
 names(a)[names(a)=='Long'] <- 'lon'
 names(a)[names(a)=='Latitude'] <- 'lat'

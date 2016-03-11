@@ -66,4 +66,15 @@ mb <- mask(block, mask ,file = 'C:/projects/phytolith/data/processed/predictors.
 
 mba <- aggregate(mb, 10, file = 'C:/projects/phytolith/data/processed/aggregated_predictors.grd', overwrite = TRUE, progress='text')
 
+############
+# Slope and aspect are way too smoothed out at this scale. Point values should be extracted from 90m product!
 
+slope <- raster('C:/data/elev/90m/90m_slope.tif')
+aspect <- raster('C:/data/elev/90m/90m_aspect.tif')
+
+northness <- calc(aspect, function(x) 180 - pmin( abs(x-360), x) ) 
+eastness <- calc( aspect, function(x)  pmin( abs(x - 270), (x + 90) ))
+
+topo <- stack(slope, northness, eastness)
+names(topo) <- c('slope', 'northness', 'eastness')
+writeRaster(topo, file = 'C:/projects/phytolith/data/processed/fine_topo.grd', progress = 'text', overwrite = TRUE)

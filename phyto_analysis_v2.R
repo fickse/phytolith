@@ -72,6 +72,12 @@
 	aggP <- brick( agg_predictors)
 	names(aggP) <- names(predictors)
 	
+	  wc <- stack( 
+				lapply(
+					list.files( "C:/data/clim/wc2-5/", pattern = "prec.*?bil$",full = TRUE)[c(1,5:12,2:4)], raster )
+			)
+	
+	
 ######################################################
 
 #reference
@@ -95,11 +101,11 @@
  bio_codes <- c(
 	 bio1 = "Annual Mean Temperature",
 	 bio2 = "Mean Diurnal Range (Mean of monthly (max temp - min temp))",
-	 bio3 = "Isothermality (bio2/bio7) (  100)",
-	 bio4 = "Temperature Seasonality (standard deviation  100)",
+	 bio3 = "Isothermality (diurnal/annual range)",
+	 bio4 = "Temperature Seasonality (standard deviation)",
 	 bio5 = "Max Temperature of Warmest Month",
 	 bio6 = "Min Temperature of Coldest Month",
-	 bio7 = "Temperature Annual Range (bio5-bio6)",
+	 bio7 = "Temperature Annual Range",
 	 bio8 = "Mean Temperature of Wettest Quarter",
 	 bio9 = "Mean Temperature of Driest Quarter",
 	 bio10 = "Mean Temperature of Warmest Quarter",
@@ -118,11 +124,30 @@
 	
 ######################################################
 
+# Ad Hoc    (FIX THESE FURTHER BACK IN PIPELINE)
+
+hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predictors$alt, opt = 'aspect'), 40, 270) 
+
+######################################################
+
+# Figure 0 : locations of points
+	x11(width = 8.677, height = 9.48)
+	plot(hillshade, col=grey(0:100/100, alpha = .5), legend=FALSE)
+	plot(predictors$alt, col=terrain.colors(25, alpha=0.35), add=TRUE, legend = FALSE)
+  
+#  map('county', 'california', col = rgb(.5,.5,.5,1), lwd = 1, add = TRUE)
+  points(phyto$lon, phyto$lat, cex = .5, lwd = .5,pch = 16, col = rgb(0,0,0,.7))
+  points(clary$lon, clary$lat, cex = 1, lwd = .5, pch = 4, col= rgb(0,0,1,.7))
+  legend('topright', legend = c( "Phytolith Abundance Data (Evett 2013)",'Grass Cover Data (Clary 2012)'), col = c('black','blue'), pch = c(16, 4))
+
+
+######################################################
+
   # Recreate figures from Clary (using variables derived from raster data
   
   # Fig 2. Perennial Grass cover as a function of distance from the coast
   
-  plot(clary$p.grass.cover~clary$dcoast, xlab = 'Distance from Pacific coast (m)', ylab = 'Perennial Grass cover') 
+  plot(clary$p.grass.cover~clary$dcoastkm, xlab = 'Distance from Pacific coast (m)', ylab = 'Perennial Grass cover') 
   plot(clary$p.grass.cover~clary$clry_slope, xlab = 'Distance from Pacific coast (m)', ylab = 'Perennial Grass cover') 
 
   
@@ -139,17 +164,24 @@
   # Phytolith content and perennial grass cover show the same pattern.
   
   i <- which(phyto$dcoast <= max(clary$dcoast))
+  
+  par(mar = c(5,5,4,2))
+  plot( clary$p.grass.cover~clary$dcoastkm, col = rgb(1,0,0,.4), pch = 4, lwd =3, ylim = c(0,1), xlab = 'Distance from Pacific Coast (km)',ylab = 'Percent')
+  points( clary$a.grass.cover~clary$dcoastkm, col = rgb(0,1,0,.4), pch = 3, lwd =3,  xlab = 'distance from coast',ylab = 'Percent')
+  points(phyto_pct ~ dcoastkm, data = phyto, ylab = '', col = rgb(0,0,1,.4), lwd = 3)
 
-  plot( clary$p.grass.cover~clary$dcoast, col = 'red', pch = 4, lwd =3, ylim = c(0,1), xlab = 'Distance from Pacific Coast (m)',ylab = 'Percent')
-  points( clary$a.grass.cover~clary$dcoast, col = 'green', pch = 3, lwd =3,  xlab = 'distance from coast',ylab = 'Percent')
+
+	m.grass <- lm(clary$p.grass.cover~clary$dcoastkm)
+	abline( m.grass, col = 'red', lwd = 2)
+	summary(m.grass)
+
+	m.exotic <- lm(clary$a.grass.cover~clary$dcoastkm)
+	abline( m.exotic, col = 'green', lwd = 2)
+	
+	m.phyto <- lm(phyto_pct~dcoastkm,data= phyto[i,])
+	abline( m.phyto, col = 'blue', lwd = 2)
   
-  
-  points(phyto_pct ~ dcoast, data = phyto, ylab = '', col = 'blue', lwd = 3)
-  abline( lm(clary$p.grass.cover~clary$dcoast), col = 'red', lwd = 2)
-  abline( lm(clary$a.grass.cover~clary$dcoast), col = 'green', lwd = 2)
-  abline( lm(phyto_pct~dcoast,data= phyto[i,]), col = 'blue', lwd = 2)
-  
-  legend('topright', legend = c('Perennial Grass Cover (Clary 2012)', 'Annual Grass Cover (Clary 2012)', 'Total Phytolith (Evett 2013)'), col = c('red','green', 'blue'), pch = c(4,3,1), lwd = 2)
+  legend('topright', legend = c('Perennial Grass Cover (Clary 2012)', 'Annual Grass Cover (Clary 2012)', 'Total Phytolith (Evett 2013)'), col = c('red','green', 'blue'), pch = c(4,3,1), lwd = 2, bg = 'white')
 
 
 #####################################################
@@ -164,6 +196,9 @@
 
   which.max(abs( unlist( lapply(clary[, paste0('bio', 1:19)], function(x) cor(x, clary$Cooling.Degree.Days..Ann.from.)))))
 
+  cor.test(clary$bio10, clary$Cooling.Degree.Days..Ann.from.)
+  cor.test(clary$dcoast, clary$Cooling.Degree.Days..Ann.from.)
+  
   # Appears to be bio 10, 'mean temperature of warmest quarter'. This makes quite a bit of sense. Lets substitute bio 10 for dcoast  and remake the plot above...
   
   plot(phyto_pct ~ bio10, data = phyto,  col = 'blue', lwd = 3,ylim = c(0,1), xlab = 'Mean Summertime Temperature (.1 degree C)',ylab = 'Percent')
@@ -173,24 +208,98 @@
   
   abline( lm(clary$p.grass.cover~clary$bio10), col = 'red', lwd = 2)
   abline( lm(clary$a.grass.cover~clary$bio10), col = 'green', lwd = 2)
-  abline( lm(phyto_pct~bio10,data= phyto), col = 'blue', lwd = 2)
+  abline( lm(phyto_pct~bio10,data= phyto[i,]), col = 'blue', lwd = 2)
+
+  polygon( c( 230, 230, 265, 265), c(.19, .63, .63, .18), lty = 2, lwd =3, border = rgb(.5,.5,.5,.5))
   
-  legend('topright', legend = c('Perennial Grass Cover (Clary 2012)', 'Annual Grass Cover (Clary 2012)', 'Total Phytolith (Evett 2013)'), col = c('red','green', 'blue'), pch = c(4,3,1), lwd = 2)
+  legend('topright', legend = c('Perennial Grass Cover (Clary 2012)', 'Annual Grass Cover (Clary 2012)', 'Total Phytolith (Evett 2013)'), col = c('red','green', 'blue'), pch = c(4,3,1), lwd = 2, bg = 'white')
 
   ############################
   # lets do the same thing, only with precip in the warmest quarter)
-  
-  
-  plot(phyto_pct ~ I(bio16/bio12), data = phyto,  col = 'blue', lwd = 3,ylim = c(0,1), xlab = 'total precip',ylab = 'Percent')
+  #may-sept
+  #? is this summer temperature though?
 
-  points( p.grass.cover ~ I(bio19/bio12), col = 'red', pch = 4, lwd =3,data = clary )
-  points( clary$a.grass.cover~clary$bio12, col = 'green', pch = 3, lwd =3,  xlab = 'distance from coast',ylab = 'Percent')
   
-  abline( lm(clary$p.grass.cover~clary$bio12), col = 'red', lwd = 2)
-  abline( lm(clary$a.grass.cover~clary$bio12), col = 'green', lwd = 2)
-  abline( lm(phyto_pct~bio12,data= phyto), col = 'blue', lwd = 2)
+  phyto$summer_precip <- rowSums( extract( wc, phyto[, c('lon','lat')])[, 5:9])
+  clary$summer_precip <- rowSums( extract( wc, clary[, c('lon','lat')])[, 5:9])
   
-  legend('topright', legend = c('Perennial Grass Cover (Clary 2012)', 'Annual Grass Cover (Clary 2012)', 'Total Phytolith (Evett 2013)'), col = c('red','green', 'blue'), pch = c(4,3,1), lwd = 2)
+  plot(phyto_pct ~ summer_precip, data = phyto[i,],  col = 'blue', lwd = 3,ylim = c(0,1), xlab = 'Summer precip (May-June)',ylab = 'Percent')
+
+  points( p.grass.cover ~ summer_precip, col = 'red', pch = 4, lwd =3,data = clary )
+  points( clary$a.grass.cover~clary$summer_precip, col = 'green', pch = 3, lwd =3,  xlab = 'distance from coast',ylab = 'Percent')
+  
+  abline( lm(clary$p.grass.cover~clary$summer_precip), col = 'red', lwd = 2)
+  abline( lm(clary$a.grass.cover~clary$summer_precip), col = 'green', lwd = 2)
+  abline( lm(phyto_pct~bio18,data= phyto[i,]), col = 'blue', lwd = 2)
+  
+  
+  cor.test(clary$p.grass.cover,clary$summer_precip)
+  cor.test(clary$a.grass.cover,clary$summer_precip)
+  cor.test(phyto$phyto_pct,phyto$summer_precip)
+  
+  legend('topright', legend = c('Perennial Grass Cover (Clary 2012)', 'Annual Grass Cover (Clary 2012)', 'Total Phytolith (Evett 2013)'), col = c('red','green', 'blue'), pch = c(4,3,1), lwd = 2, bg = 'white')
+  
+  
+  ########################
+  # Same thing,but for slope
+  
+  plot(phyto_pct ~ slope, data = phyto,  col = 'blue', lwd = 3,ylim = c(0,1), xlab = 'slope (degrees)',ylab = 'Percent', xlim = c(0, 7))
+	
+  points( p.grass.cover ~ slope, col = 'red', pch = 4, lwd =3,data = clary )
+  points( a.grass.cover ~ slope, data= clary, col = 'green', pch = 3, lwd =3,  xlab = 'distance from coast',ylab = 'Percent')
+  
+  abline( lm(clary$p.grass.cover~clary$slope), col = 'red', lwd = 2)
+  abline( lm(clary$a.grass.cover~clary$slope), col = 'green', lwd = 2)
+  abline( lm(phyto_pct~slope,data= phyto), col = 'blue', lwd = 2)
+  
+
+  
+  cor.test(clary$p.grass.cover,clary$slope)
+  cor.test(clary$a.grass.cover,clary$slope)
+  cor.test(phyto$phyto_pct,phyto$slope)
+  
+  
+  ########################
+  # Testing for correlations among soil variables and responses
+  soilv <- c('Bulk Density' = 'bulk', 'Soil Carbon' ='carbon', 'CEC' =  'cec', 'pH' = 'ph','Coarse Debris' = 'coarse', 'Sand' = 'sand', 'Silt' = 'silt', 'Clay'= 'clay')
+
+  topov <- c('Slope' = 'slope', 'Elevation' = 'alt', 'North-ness' = 'northness', 'East-ness' ='eastness')
+
+  bio2 <- names(bio_codes)
+  names(bio2) <- bio_codes
+  bio2 <- c('May-Sept Precip' = 'summer_precip', bio2) 
+  vv <- c(topov, soilv, bio2)
+  
+   p.grass <- lapply( vv, function(x) cor.test( clary$p.grass.cover, clary[,x]) )
+   a.grass <- lapply( vv, function(x) cor.test( clary$a.grass.cover, clary[,x]) )
+   phyto.cor <- lapply( vv, function(x) cor.test( phyto$phyto_pct,phyto[,x] ))
+   phytoC.cor <- lapply( vv, function(x) cor.test( phyto$phyto_pct[i],phyto[i,x] ))
+
+   get_cors <- function(x) {
+		n <- sprintf("%2.2f", round(x$estimate,2))
+		cuts <- c(0,.001, .01, .05, 1, 100)
+		stars <- c( '***', '** ', '*  ', '   ')
+		sig <- stars[cut( x$p.value, cuts) ] 
+		paste0(n, sig)
+		#ifelse(x$p.value <= .05, paste0(n, '*'), paste0(n))
+	}
+   cors <- rbind(sapply(p.grass, get_cors), sapply(phytoC.cor, get_cors), sapply(phyto.cor, get_cors), sapply(a.grass, get_cors) ) 
+
+	colnames(cors) <- names(vv)
+	row.names(cors) <- c('Perennial grass cover', 'Phytolith Content \n (Restricted Range)', 'Phytolith content \n (Full Range)', 'Annual grass cover')
+
+	t(cors)
+	print.xtable(xtable(t(cors)), type = 'html', file = 'C:/projects/phytolith/out/tab/variables_cor.html') 
+
+	######################
+	# Testing for correlations with topographic variables
+	topov <- c('slope', 'elev', 'northness', 'eastness')
+	
+	
+	
+  # cor.test(clary$p.grass.cover,clary$clay)
+  # cor.test(clary$a.grass.cover,clary$clay)
+  # cor.test(phyto$phyto_pct,phyto$clay)
   
   
   ########################
@@ -199,10 +308,14 @@
   
   # Attempting to map these out -- maybe cluster around some known feature?
   
-  w <- which(phyto$phyto_pct > .2 & phyto$bio10 > 230 & phyto$bio10 < 260) 
-  map('county', 'california')
-  points(phyto$lon[w], phyto$lat[w], cex = 2, lwd = 2,pch = 4, col = 'red')
-  points(phyto$lon, phyto$lat, cex = 1, lwd = 1,pch = 1)
+  w <- which(phyto$phyto_pct > .21 & phyto$bio10 > 230 & phyto$bio10 < 260) 
+  
+  # plot(hillshade, col=grey(0:100/100, alpha = .5), legend=FALSE)
+  # plot(predictors$alt, col=terrain.colors(25, alpha=0.35), add=TRUE)
+  
+  map('county', 'california', col = rgb(0,0,0,.1), lwd = 1, fill = TRUE)
+  points(phyto$lon, phyto$lat, cex = 1, lwd = .5,pch = 16, col = rgb(0,0,0,.7))
+  points(phyto$lon[w], phyto$lat[w], cex = 2, lwd = 3,pch = 1, col = 'red')
   
   
   # Yes! these all cluster around a couple of counties in the foothills: Stanislaus and Merced Counties. ? what could be going on there. May have to consult an expert.
@@ -266,16 +379,20 @@
   
   soilv <- c('bulk', 'carbon', 'cec', 'clay','coarse', 'ph', 'sand','silt')
 
-  pc <- princomp(phyto[, soilv])
+  pc <- princomp(phyto[, soilv], cor = TRUE)
   biplot(pc)
   plot(pc$scores[,1:2])
   points(pc$scores[w,1:2], lwd = 5,col = 'red')
+  plot(pc$scores[,1:2],cex = 1 + scale(phyto$phyto_pct), lwd = 1,col = 'red')
   
   
   # PCA for bioclim variables? probably not...
-  pc <- princomp(phyto[, paste0('bio',1:19)])
+  pc <- princomp(phyto[, paste0('bio',1:19)], cor = TRUE)
+  biplot(pc)
   plot(pc$scores[,1:2])
   points(pc$scores[w,1:2], col = 'red', lwd =5 )
+  plot(pc$scores[,1:2],cex = 1 + scale(phyto$phyto_pct), lwd = 1,col = 'red')
+  points(pc$scores[w,1:2],pch = 16,cex = 1 + scale(phyto$phyto_pct), lwd = 1,col = rgb(1,0,0,.3))
   
   # Maybe I should just map them...
   library(plotKML)
@@ -295,9 +412,10 @@
 	pcr <- princomp( sr[i ,c( paste0('bio',c(1:19)), 'ph', 'bulk', 'sand','clay','silt','cec')], cor = TRUE)
 	biplot(pcr, xlabs = rep('', length(i)), scale = .7)
 	
-	plot(pcr$scores[,1:2], cex = .5, col = rgb(0,0,0,.5), pch = 16)
+	plot(pcr$scores[,1:2], cex = .25, col = rgb(0,0,0,.5), pch = 16)
 	pr <- predict( pcr, phyto)
-	points(pr, pch = 1, col = rgb(1,0,0,.5), lwd = 2)
+	points(pr, pch = 1, col = rgb(1,0,0,1),cex = 2 + scale(phyto$phyto_pct), lwd = 1)
+	points(pr, pch = 16, col = rgb(1,0,0,.05),cex = 2 + scale(phyto$phyto_pct), lwd = 1)
 	summary(pcr)
 	
 	
@@ -331,28 +449,60 @@
 
  # variables
  
- pvars <- c( 'alt', 'slope', 'northness', 'dcoast',
-			'eastness', 'bulk', 'ph', 'silt', 'clay', 'cec', 'sand', 
+ pvars <- c( #'slope',
+			#'northness',
+			#'eastness',
+			'bulk', 
+			'carbon',
+			'ph',
+			'silt',
+			'clay',
+			'cec', 
+#			'sand',
 			 'bio1', # = "Annual Mean Temperature",
-#			 'bio2', # "Mean Diurnal Range (Mean of monthly (max temp - min temp))",
-#			 'bio3'  # "Isothermality (bio2/bio7) (  100)",
+			 'bio2', # "Mean Diurnal Range (Mean of monthly (max temp - min temp))",
+			 'bio3',  # "Isothermality (bio2/bio7) (  100)",
 #			 'bio4', # "Temperature Seasonality (standard deviation  100)",
-#			 'bio5',  # "Max Temperature of Warmest Month",
+			 'bio5',  # "Max Temperature of Warmest Month",
 #			 'bio6',  # "Min Temperature of Coldest Month",
 			 'bio7' ,# "Temperature Annual Range (bio5-bio6)",
 #			 bio8 = "Mean Temperature of Wettest Quarter",
 #			 'bio9' , # "Mean Temperature of Driest Quarter",
 #			 'bio10' , # "Mean Temperature of Warmest Quarter",
 #			 bio11 = "Mean Temperature of Coldest Quarter",
-			 'bio12' # = "Annual Precipitation",
+			 'bio12', # = "Annual Precipitation",
 #			 'bio13', # = "Precipitation of Wettest Month",
 #			 'bio14', # = "Precipitation of Driest Month",
-#			 'bio15', # = "Precipitation Seasonality (Coefficient of Variation)",
+			 'bio15',#, # = "Precipitation Seasonality (Coefficient of Variation)",
 #			 'bio16', # = "Precipitation of Wettest Quarter",
 #			 'bio17' # = "Precipitation of Driest Quarter",
 #			 'bio18', # = "Precipitation of Warmest Quarter",
 #			 'bio19'  # = "Precipitation of Coldest Quarter" 
-			) 
+#			'summer_precip'
+			'alt',
+			'dcoast'
+			)
+
+f1.gam <- as.formula( 
+		paste0(
+			"I(log(phyto_pct+ .005)) ~ s(", 
+				paste( pvars, collapse = ') + s('), ')'
+			)
+		)
+
+f1 <- as.formula( 
+		paste0(
+			"I(log(phyto_pct+ .005)) ~ ", 
+				paste( pvars, collapse = ' + ')
+			)
+		)
+
+# for the clary dataset
+f2 <- update(f1, p.grass.cover ~ .)
+
+f2.gam <- update(f1.gam, p.grass.cover ~ .)
+
+		
 #########################################################
 
 	# Generate Folds for cross-validation
@@ -361,7 +511,22 @@
 	k.p <- kfold(1:nrow(phyto), k = k)
 	k.c <- kfold(1:nrow(clary), k = k)
 
+#########################################################
 
+	#Moran MC functions
+	
+	moran <- function(resids, xy) {
+		require(spdep)
+		d <- 1/pointDistance(xy,xy,allpairs = TRUE, lonlat = TRUE)
+		diag(d) <- 1
+		mat <- mat2listw(d)  
+		moran.mc(resids, mat, 999, return_boot = FALSE)
+	}
+	
+	moran.phyto <- list()
+	moran.clary <- list()
+	pred.phyto <- list()
+	pred.clary <- list()
 #########################################################
 
 # Random Forest
@@ -379,6 +544,19 @@
 	p.rfc <- predict(aggP, rfc, progress = 'text')
 	
 	spplot(stack(p.rf, p.rfc))
+	
+	pred.phyto$rf <-  predict(rf)
+	pred.clary$rf <- predict(rfc)
+	
+	
+	
+	moran.phyto$rf <- moran( log(phyto$phyto_pct + .005) - predict(rfc), phyto[, c('lon','lat')] )
+	
+	moran.clary$rf <- moran( clary$p.grass.cover - predict(rfc), clary[, c('lon','lat')] )
+	
+
+
+
 	
 	###################
 	# Cross- Validate #
@@ -416,20 +594,29 @@
 
 # GAM
 
-	f1 <- I(log(phyto_pct+ .001)) ~  s(bio1) + s(bio12) + s(bio14) + s(bio3) + s(northness) + s(eastness)+ s(slope) + s(dcoast) + s(ph) + s(bulk) 
-	f2 <- update(f1, p.grass.cover ~ .)
+	f1.gam <- I(log(phyto_pct + .005)) ~  s(bio1) + s(bio12) + s(bio14) + s(bio3) + s(northness) + s(eastness)+ s(slope) + s(dcoast) + s(ph) + s(bulk) 
+	f2.gam <- update(f1, p.grass.cover ~ .)
 	
-	g <- gam(f1, data = phyto, select = TRUE)
-	g.c <- gam(f2, data = clary, family = binomial(link = 'logit'))
+	g <- gam(f1.gam, data = phyto,select = TRUE)
+	g.c <- gam(f2.gam, data = clary, select = TRUE)
 
 	
 	p.g <- exp(predict(aggP, g))
-	p.gc <- predict(aggP, g.c)
+	p.gc <- exp(predict(aggP, g.c))
+	p.gc[p.gc[] > 1] <- 1
 	spplot(stack(p.g, p.gc))
 
 	
 	plot(p.g)
-
+	
+	pred.phyto$gam <-  predict(g)
+	pred.clary$gam <- predict(g.c)
+	
+	moran.phyto$gam <- moran( log(phyto$phyto_pct + .001) - predict(g), phyto[, c('lon','lat')] )
+	moran.clary$gam <- moran( clary$p.grass.cover - predict(g.c) , clary[, c('lon','lat')] )
+	
+	
+	
 	###################
 	# Cross- Validate #
 	###################
@@ -464,7 +651,7 @@
 	
 ###########################################################
 
-# Generate rasterized predictions using gnet models (lasso and ridge)
+	# Function for Generating rasterized predictions using gnet models (lasso and ridge)
 
 	predict.gnet <- function(r, m, ...){
 		xn <- row.names(m$beta)
@@ -500,6 +687,15 @@
 	plot(p.lso)
 	plot(p.lsoc)
 
+	spplot(stack(p.lso, p.lsoc))
+	
+	pred.phyto$lasso <- predict(lso, newx = as.matrix(phyto[,pvars]))
+	pred.clary$lasso <- predict(lso.c, newx = as.matrix(clary[,pvars]))
+	
+	moran.phyto$lasso <- moran( log(phyto$phyto_pct + .005) - pred.phyto$lasso, phyto[, c('lon','lat')] )
+
+	moran.clary$lasso <- moran( clary$p.grass.cover - pred.clary$lasso, clary[, c('lon','lat')] )
+	
 	
 	
 	###################
@@ -539,8 +735,8 @@
 
 	#  CART
 	
-	f1 <- I(log(phyto_pct+ .001)) ~  bio1 + bio12 + northness + slope + dcoast + veg
-	f2 <- update(f1, p.grass.cover ~ .)
+	# f1 <- I(log(phyto_pct+ .001)) ~  bio1 + bio12 + northness + slope + dcoast + veg
+	# f2 <- update(f1, p.grass.cover ~ .)
 	
 	
 	ct = rpart(f1, data = phyto)
@@ -555,6 +751,15 @@
 	plot(p.ct)
 	plot(p.ctc)
 
+	
+	pred.phyto$cart <-  predict(ct)
+	pred.clary$cart <- predict(ctc)
+	
+	moran.phyto$cart <- moran( log(phyto$phyto_pct + .005) - predict(ct), phyto[, c('lon','lat')] )
+	moran.clary$cart <- moran( clary$p.grass.cover - predict(ctc) , clary[, c('lon','lat')] )
+	
+	
+	
 	###################
 	# Cross- Validate #
 	###################
@@ -590,6 +795,12 @@
 
 #########################################################################
 #########################################################################
+#GLM
+
+
+
+#########################################################################
+#########################################################################
 
 # Cross Validation Results (!)
 
@@ -611,16 +822,36 @@ cv.clary <- list('Random Forest' = rf.clary.cv$p,
 cv.phy <- lapply(cv.phy, function(x) exp(x) + .001)
 obs <- exp(rf.phyto.cv$o) + .001
 
-(cv_phy <- rbind(	
+(stats <- t(cv_phy <- rbind(	
 		'cor' = sapply(cv.phy, function(x) cor(x, obs)),
 		'rmse' = sapply(cv.phy, function(x) sqrt(mean( (x - obs)^2))),
 		'MAE' = sapply(cv.phy, function(x) mean( abs(x - obs))),
-		'ME' = sapply(cv.phy, function(x) mean( x - obs))
-	))
+		'ME' = sapply(cv.phy, function(x) mean( x - obs)),
+		'I' = sapply(moran.phyto, function(x)  round(x$statistic,4))
+	)))
 
+	
+print.xtable( xtable(stats, digits = c(1,2,2,2,2,4)), type = 'html', file = 'C:/projects/phytolith/out/tab/validation_stats.html')
+	
+	
 # are they correlated?
 cor(do.call(cbind,cv.phy))
 
-ROW <-1  # cor
+# residual correlations
+resid_cors <- cor(do.call( cbind, lapply(pred.phyto, function(x) x - log(phyto$phyto_pct + .005)) ))
+
+row.names(resid_cors) <- colnames(resid_cors) <- names(pred.phyto)
+print.xtable( xtable( resid_cors, digits = 2), type = 'html', file = 'C:/projects/phytolith/out/tab/residual_correlations.html')
+
+
+
+
+
+ROW <-3  # cor
 ens <- p.lso*cv_phy[ROW,4]  +  p.ct* cv_phy[ROW,2] + p.g * cv_phy[ROW,3] + p.rf*cv_phy[ROW,1]
 ens <- ens / sum(cv_phy[ROW,])
+
+plot(ens)
+ens[ens[] > 1] <- 1
+plot(ens)
+points(phyto[, c('lon','lat')])
