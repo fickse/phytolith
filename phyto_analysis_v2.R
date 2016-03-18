@@ -25,6 +25,7 @@
   library(maps)
   library(knitr)
   library(raster)
+  library(rasterVis)
   library(dismo)
   library(arm)
   library(MASS)
@@ -35,6 +36,10 @@
   library(xtable)
   require(rpart.plot)
   library(mgcv)
+  require(ggplot2)
+  library(ggdendro)
+  library(FNN)
+	
 
 ###################################################### 
 
@@ -77,6 +82,11 @@
 					list.files( "C:/data/clim/wc2-5/", pattern = "prec.*?bil$",full = TRUE)[c(1,5:12,2:4)], raster )
 			)
 	
+	#scaled data
+	j <- which( names(phyto) %in% c('series','County', 'phyto_pct', 'bilobate_star'))
+	phyto.scaled <- cbind( scale(phyto[,-j]), phyto[,j])
+	
+	
 	
 ######################################################
 
@@ -100,7 +110,7 @@
 
  bio_codes <- c(
 	 bio1 = "Annual Mean Temperature",
-	 bio2 = "Mean Diurnal Range (Mean of monthly (max temp - min temp))",
+	 bio2 = "Mean Diurnal Range \n(Mean of monthly (max temp - min temp))",
 	 bio3 = "Isothermality (diurnal/annual range)",
 	 bio4 = "Temperature Seasonality (standard deviation)",
 	 bio5 = "Max Temperature of Warmest Month",
@@ -113,7 +123,7 @@
 	 bio12 = "Annual Precipitation",
 	 bio13 = "Precipitation of Wettest Month",
 	 bio14 = "Precipitation of Driest Month",
-	 bio15 = "Precipitation Seasonality (Coefficient of Variation)",
+	 bio15 = "Precipitation Seasonality \n(Coefficient of Variation)",
 	 bio16 = "Precipitation of Wettest Quarter",
 	 bio17 = "Precipitation of Driest Quarter",
 	 bio18 = "Precipitation of Warmest Quarter",
@@ -263,17 +273,19 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
   # Testing for correlations among soil variables and responses
   soilv <- c('Bulk Density' = 'bulk', 'Soil Carbon' ='carbon', 'CEC' =  'cec', 'pH' = 'ph','Coarse Debris' = 'coarse', 'Sand' = 'sand', 'Silt' = 'silt', 'Clay'= 'clay')
 
-  topov <- c('Slope' = 'slope', 'Elevation' = 'alt', 'North-ness' = 'northness', 'East-ness' ='eastness')
+  topov <- c('Slope' = 'slope', 'Elevation' = 'alt', 'North-ness' = 'northness', 'East-ness' ='eastness', 'Coast Distance' = 'dcoast')
 
   bio2 <- names(bio_codes)
   names(bio2) <- bio_codes
   bio2 <- c('May-Sept Precip' = 'summer_precip', bio2) 
   vv <- c(topov, soilv, bio2)
   
-   p.grass <- lapply( vv, function(x) cor.test( clary$p.grass.cover, clary[,x]) )
-   a.grass <- lapply( vv, function(x) cor.test( clary$a.grass.cover, clary[,x]) )
-   phyto.cor <- lapply( vv, function(x) cor.test( phyto$phyto_pct,phyto[,x] ))
-   phytoC.cor <- lapply( vv, function(x) cor.test( phyto$phyto_pct[i],phyto[i,x] ))
+  method = 'pearson' # doesn't depend on bivariate normal independent
+  
+   p.grass <- lapply( vv, function(x) cor.test( clary$p.grass.cover, clary[,x], method = method) )
+   a.grass <- lapply( vv, function(x) cor.test( clary$a.grass.cover, clary[,x], method = method) )
+   phyto.cor <- lapply( vv, function(x) cor.test( phyto$phyto_pct,phyto[,x], method = method))
+   phytoC.cor <- lapply( vv, function(x) cor.test( phyto$phyto_pct[i],phyto[i,x], method = method ))
 
    get_cors <- function(x) {
 		n <- sprintf("%2.2f", round(x$estimate,2))
@@ -405,11 +417,15 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
 ##################################################################
 
 # Another Curiosity: How well are is the range of bioclimatic and soil characteristics
-# sampled?
+# sampled? 
+
+# This should determine how certain we are about extrapolating to certain areas within the state!
 	
     sr <- sampleRandom(predictors, 3000, xy = TRUE)
-	i <- which(sr[,'alt'] < 1200 & sr[,'bio4'] < 7500)
+	#i <- which(sr[,'alt'] < 1200 & sr[,'bio4'] < 7500)
+	i <- 1:nrow(sr)
 	pcr <- princomp( sr[i ,c( paste0('bio',c(1:19)), 'ph', 'bulk', 'sand','clay','silt','cec')], cor = TRUE)
+	pcr <- princomp( sr[i ,pvars], cor = TRUE)
 	biplot(pcr, xlabs = rep('', length(i)), scale = .7)
 	
 	plot(pcr$scores[,1:2], cex = .25, col = rgb(0,0,0,.5), pch = 16)
@@ -420,7 +436,9 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
 	
 	
 	j <- rbind(pcr$scores[,1:3], pr[,1:3])
+	#library(rgl)
 	plot3d(j, col = c(rep('black', nrow(pcr$scores)), rep('red', nrow(pr))))
+
 	
 	
 	map('state','california')
@@ -449,36 +467,38 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
 
  # variables
  
- pvars <- c( #'slope',
-			#'northness',
-			#'eastness',
+ pvars <- c(
+			'slope',
+			'northness',
+			'eastness',
 			'bulk', 
-			'carbon',
+			#'carbon',
 			'ph',
 			'silt',
 			'clay',
 			'cec', 
-#			'sand',
+			'sand',
+			'coarse',
 			 'bio1', # = "Annual Mean Temperature",
 			 'bio2', # "Mean Diurnal Range (Mean of monthly (max temp - min temp))",
-			 'bio3',  # "Isothermality (bio2/bio7) (  100)",
-#			 'bio4', # "Temperature Seasonality (standard deviation  100)",
+			  'bio3',  # "Isothermality (bio2/bio7) (  100)",
+			 'bio4', # "Temperature Seasonality (standard deviation  100)",
 			 'bio5',  # "Max Temperature of Warmest Month",
-#			 'bio6',  # "Min Temperature of Coldest Month",
-			 'bio7' ,# "Temperature Annual Range (bio5-bio6)",
-#			 bio8 = "Mean Temperature of Wettest Quarter",
-#			 'bio9' , # "Mean Temperature of Driest Quarter",
-#			 'bio10' , # "Mean Temperature of Warmest Quarter",
-#			 bio11 = "Mean Temperature of Coldest Quarter",
+			 'bio6',  # "Min Temperature of Coldest Month",
+			  'bio7' ,# "Temperature Annual Range (bio5-bio6)",
+			 'bio8', # = "Mean Temperature of Wettest Quarter",
+			  'bio9' , # "Mean Temperature of Driest Quarter",
+			 'bio10' , # "Mean Temperature of Warmest Quarter",
+			 'bio11', #= "Mean Temperature of Coldest Quarter",
 			 'bio12', # = "Annual Precipitation",
-#			 'bio13', # = "Precipitation of Wettest Month",
-#			 'bio14', # = "Precipitation of Driest Month",
-			 'bio15',#, # = "Precipitation Seasonality (Coefficient of Variation)",
-#			 'bio16', # = "Precipitation of Wettest Quarter",
-#			 'bio17' # = "Precipitation of Driest Quarter",
-#			 'bio18', # = "Precipitation of Warmest Quarter",
-#			 'bio19'  # = "Precipitation of Coldest Quarter" 
-#			'summer_precip'
+			 'bio13', # = "Precipitation of Wettest Month",
+			  'bio14', # = "Precipitation of Driest Month",
+			  'bio15',#, # = "Precipitation Seasonality (Coefficient of Variation)",
+			 'bio16', # = "Precipitation of Wettest Quarter",
+			  'bio17', # = "Precipitation of Driest Quarter",
+			 'bio18', # = "Precipitation of Warmest Quarter",
+			 'bio19',  # = "Precipitation of Coldest Quarter" 
+			#'summer_precip',
 			'alt',
 			'dcoast'
 			)
@@ -531,7 +551,7 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 
 # Random Forest
 
-	rf <- randomForest( y = log(phyto[,'phyto_pct'] + .005), x = phyto[, pvars], ntree = 5000, mtry = 2)
+	rf <- randomForest( y = log(phyto[,'phyto_pct'] + .005), x = phyto[, pvars], ntree = 10000, mtry = 2)
 	rf
 	varImpPlot(rf)
 
@@ -594,7 +614,7 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 
 # GAM
 
-	f1.gam <- I(log(phyto_pct + .005)) ~  s(bio1) + s(bio12) + s(bio14) + s(bio3) + s(northness) + s(eastness)+ s(slope) + s(dcoast) + s(ph) + s(bulk) 
+	f1.gam <- I(log(phyto_pct + .005)) ~  s(dcoast) + s(bio1) + s(bio7) + s(bio12) + s(bio3) + s(northness) + s(eastness)+ s(slope) + s(ph) + s(bulk) + s(alt) 
 	f2.gam <- update(f1, p.grass.cover ~ .)
 	
 	g <- gam(f1.gam, data = phyto,select = TRUE)
@@ -795,7 +815,55 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 
 #########################################################################
 #########################################################################
-#GLM
+
+#OLS
+
+	ols = stepAIC(lm(f1, data = phyto))
+	olsc = stepAIC(lm(f2, data = clary))
+
+	p.ols <- exp(predict(aggP, ols))-.005
+	p.olsc <- predict(aggP, ols)
+
+	plot(p.ct)
+	plot(p.ctc)
+
+	
+	pred.phyto$ols <-  predict(ols)
+	pred.clary$ols <- predict(olsc)
+	
+	moran.phyto$ols <- moran( log(phyto$phyto_pct + .005) - predict(ols), phyto[, c('lon','lat')] )
+	moran.clary$ols <- moran( clary$p.grass.cover - predict(ols) , clary[, c('lon','lat')] )
+	
+	###################
+	# Cross- Validate #
+	###################
+	
+
+	# phytolith data
+	
+	out <- list()
+	
+	for (j in 1:k){
+			train <- which(k.p != j)
+			test <- which( k.p == j)
+			rpj <- stepAIC(lm( f1, data = phyto[train, ]))
+			out[[j]] <- predict(rpj, newdata=phyto[test,])        
+	}
+	
+	out <- unlist(out)
+	ols.phyto.cv <- list ( p =  out[order(as.numeric(names(out)))], o = log(phyto[,'phyto_pct'] + .005))
+	
+	# perennial grass data
+	
+	out <- list()
+	for (j in 1:k){
+			train <- which(k.c != j)
+			test <- which( k.c == j)
+			rpj <- stepAIC(lm( f2, data = clary[train, ]))
+			out[[j]] <- predict(rpj, newdata=clary[test,]) 
+	}
+	out <- unlist(out)
+	ols.clary.cv <- list ( p =  out[order(as.numeric(names(out)))], o = clary$p.grass.cover)
 
 
 
@@ -807,26 +875,42 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 cv.phy <- list ( 'Random Forest' = rf.phyto.cv$p,
 				 'CART' = cart.phyto.cv$p,
 				 'GAM' = gam.phyto.cv$p,
-				 'Lasso' = lso.phyto.cv$p
+				 'Lasso' = lso.phyto.cv$p,
+				 'OLS' = ols.phyto.cv$p
 				)
 
 cv.clary <- list('Random Forest' = rf.clary.cv$p,
 				 'CART' = cart.clary.cv$p,
 				 'GAM' = gam.clary.cv$p,
-				 'Lasso' = lso.clary.cv$p
+				 'Lasso' = lso.clary.cv$p,
+				 'OLS' = ols.phyto.cv$p
 				)
 				
 				
 # phyto
+
+	# determine what the ensemble would have predicted for each fold, based on cor
+	# out <- list()
+	# for (j in 1:k){
+			# train <- which(k.p != j)
+			# test <- which( k.p == j)
+			# cors <- sapply(cv.phy, function(x) cor(exp(x[test]) + .005, obs[test]))
+			# p1 <- rowSums(mapply(function(x,y) x[test]*y, cv.phy, cors))
+			# out[[j]] <- p1 / sum(cors)
+	# }
+	# out <- unlist(out)
+	# cv.phy[['Ensemble']] <- out[order(as.numeric(names(out)))]
 
 cv.phy <- lapply(cv.phy, function(x) exp(x) + .001)
 obs <- exp(rf.phyto.cv$o) + .001
 
 (stats <- t(cv_phy <- rbind(	
 		'cor' = sapply(cv.phy, function(x) cor(x, obs)),
+		'R2' = sapply(cv.phy, function(x) cor(x, obs)**2),
 		'rmse' = sapply(cv.phy, function(x) sqrt(mean( (x - obs)^2))),
 		'MAE' = sapply(cv.phy, function(x) mean( abs(x - obs))),
 		'ME' = sapply(cv.phy, function(x) mean( x - obs)),
+		'Median' = sapply(cv.phy, function(x) median( x - obs)),
 		'I' = sapply(moran.phyto, function(x)  round(x$statistic,4))
 	)))
 
@@ -847,11 +931,239 @@ print.xtable( xtable( resid_cors, digits = 2), type = 'html', file = 'C:/project
 
 
 
-ROW <-3  # cor
-ens <- p.lso*cv_phy[ROW,4]  +  p.ct* cv_phy[ROW,2] + p.g * cv_phy[ROW,3] + p.rf*cv_phy[ROW,1]
+ROW <-2  # cor
+ens <- p.lso*cv_phy[ROW,4]  +  p.ct* cv_phy[ROW,2] + p.g * cv_phy[ROW,3] + p.rf*cv_phy[ROW,1] + p.ols*cv_phy[ROW,5]
 ens <- ens / sum(cv_phy[ROW,])
 
 plot(ens)
 ens[ens[] > 1] <- 1
 plot(ens)
-points(phyto[, c('lon','lat')])
+
+points(phyto[, c('lon','lat')], cex = 1 + phyto$phyto_pct^3)
+
+p.ens <- extract(ens, phyto[, c('lon','lat')])
+c( 'cor' = cor( p.ens, obs), 
+	'R2' = cor( p.ens, obs)**2,
+	'rmse' = sqrt(mean( (p.ens - obs)^2)),
+	'MAE' = mean( abs(p.ens - obs)),
+	'ME' = mean( p.ens - obs),
+	'MEDE' = median( p.ens - obs),
+	'I' = round(moran( p.ens - obs, phyto[, c('lon','lat')] )$statistic,4)
+	)
+	
+
+##############################################################################################s
+##############################################################################################s
+
+preds <- stack( p.rf, p.ct, p.g, p.ols, p.lso, ens)
+preds[preds[]>1] <- 1
+names(preds) <- c('Random Forest', 'CART', 'GAM', 'OLS', 'Lasso', 'Ensemble')
+myTheme=rasterTheme(region=rev(rainbow(10)))
+levelplot(preds, contour = FALSE,par.settings=myTheme)
+	
+
+##############################################################################################s
+##############################################################################################s
+
+	white_red <- colorRampPalette(c(rgb(1,0,0,.1), rgb(0,0,1,.5)), alpha = TRUE)
+	pal <- colorRampPalette( c( rgb(0,0,0,.1), rgb(0,0,0,.5)), alpha = TRUE)
+	pal <- colorRampPalette( c( gray(.5), gray(1)))
+	pal <- function(x) { rainbow(x, alpha = .3) }
+	pal2 <- function(x) { rainbow(x, alpha = .7) }
+	
+	
+	kp <- pvars[-c(2:3)]
+	pca <-  princomp( sr[ ,kp], cor = TRUE)
+	
+	#Mkay how much variance do the PCs explain. Choose the # dimensions that make up 80$
+	summary(pca)
+	# 3 dimensions
+	
+	loads <- with(pca, unclass(loadings))
+	
+	interesting <- c( 'Annual Temp' = 'bio1', "Precip Seasonality" = 'bio15', 'Elevation' = 'alt',  'Annual Precipitation' = 'bio12', "Dry Season Precip." = 'bio17', 'pH'  = 'ph', 'CEC' = 'cec', "Sand" = 'sand')
+
+	
+	
+	# find euclidean distance between each grid cell and nearest neighboring  cell in PC 1-3 space
+	
+	pa <- predict(pca, aggP[])
+	pa.hi <- predict(pca, predictors[])
+
+	pr <- predict(pca, phyto[,kp])
+	pa.ok <- which(!apply(pa,1, function(x) any(is.na(x))))
+	pa.ok.hi <- which(!apply(pa.hi,1, function(x) any(is.na(x))))
+
+	dis <- knnx.dist( pr[,1:4],pa[pa.ok,1:4],1)
+	dis <- rowMeans(dis)
+	
+	dis.hi <- knnx.dist( pr[,1:4],pa.hi[pa.ok.hi,1:4],3)
+	dis.hi <- rowMeans(dis.hi)
+	
+	
+	# Map this to 2d space. 
+
+	unc <- aggP[[1]]
+	unc[] <- NA
+	unc[pa.ok] <- dis
+
+	unc.hi <- predictors[[1]]
+	unc.hi[] <- NA
+	unc.hi[pa.ok.hi] <- dis.hi
+	
+	brks <- c(seq(0, 12, length.out = 13))
+	
+	
+	png(file = 'C:/projects/phytolith/out/fig/pca.png', width = 13, height = 8.5, unit = 'in', res = 200)
+	par(mfrow = c(1,2))
+	plot(pa[pa.ok,1:2], cex = .1 + dis, pch = 16, col = pal(12)[cut(dis,brks, right = FALSE)], xlab = 'PCA 1', ylab = 'PCA 2')
+	
+	# plot(pa.hi[pa.ok.hi,1:2], cex = .1 + dis.hi, pch = 16, col = rev(rainbow(5, alpha = .5))[cut(dis.hi,brks, right = FALSE)], xlab = 'PCA 1', ylab = 'PCA 2')
+
+	
+	sapply(interesting, function(x) {
+		i <- which(x == row.names(loads))
+#		text( loads[i,1]*pca$scale[i]**.85, loads[i,2]* pca$scale[i]**.85, x)
+		text( loads[i,1]*20, loads[i,2]*20, names(interesting)[match(x,interesting)])
+	})
+	
+	
+	
+#	points(pr[,1:2], cex = .1 + phyto$phyto_pct, pch = 3, lwd = 1.5, col = rgb(0,0,0,1))
+	points(pr[,1:2], cex =  1 + 2*phyto$phyto_pct/max(phyto$phyto_pct), pch = 1, col = rgb(0,0,0,1))
+		#library(rgl)
+	#plot3d(pa[pa.ok,], col = terrain.colors(5)[cut(dis,5)], cex = 2)
+
+	
+	plot(unc.hi , col = pal2(12), breaks = brks)
+	points(phyto[,c('lon','lat')], cex = 2, pch =3, lwd = 1.5, col = rgb(0,0,0,.3))
+	points(phyto[,c('lon','lat')], cex = .5, pch =1, lwd = 1.5, col = rgb(0,0,0,.2))
+	
+	dev.off()
+
+	levelplot(unc, contour = TRUE)
+	unc.hi <- unc
+##############################################################################################s
+##############################################################################################s
+
+
+	
+# Variable Importance
+
+# create a figure /table that shows importance scores (somehow)
+
+# Random Forest
+
+	i.rf <- importance(rf)[,1]
+	#i.rf.size <- scale(i.rf, center = min(i.rf))
+	i.rf.size <- i.rf/ max(i.rf)
+
+	i.rf.d <- data.frame( rowv = names(i.rf), colv = 'Random Forest', size = i.rf.size, color = 1)
+	
+# 	cart
+
+	i.cart <- ct$variable.importance
+	i.cart.size <- i.cart/max(i.cart)
+
+	i.cart.d <- data.frame(rowv = names(i.cart), colv = 'CART', size = i.cart.size,color = 1)
+	
+# OLS
+
+	i.ols <- coef(update(ols, . ~., data = phyto.scaled))[-1]
+	
+	i.ols.d <- data.frame(rowv = names(i.ols), colv = 'OLS', size = abs(i.ols) / max(abs(i.ols)), color = ifelse( i.ols < 0, 3, 2))
+	
+# GAM
+
+	i.gam <- anova(g)$s.table[,3]
+	i.gam <- anova(g)$chi.sq
+	i.gam <- i.gam[ -which( round(i.gam, 10) == 0) ]
+	names(i.gam) <- gsub('[()]', '', names(i.gam))
+	names(i.gam) <- gsub('^s', '', names(i.gam))
+	
+	i.gam.d <- data.frame(rowv = names(i.gam), colv = 'GAM', size = i.gam/max(i.gam), color = 1) 
+	
+	
+# LASSO
+
+	i.lasso <- coef(lso)[,1][-1]
+	i.lasso <- i.lasso[ -which( i.lasso == 0) ]
+	
+	i.las.size <- abs( i.lasso / max(abs(i.lasso)))
+
+	i.las.d <- data.frame(rowv = names(i.lasso), colv = 'Lasso', size = i.las.size, color = ifelse( i.lasso < 0, 3, 2))
+
+	
+	
+	dataf <- rbind(i.rf.d, i.cart.d, i.gam.d, i.ols.d, i.las.d)
+#dataf$rowv <- as.factor(dataf$rowv)
+
+# change names
+
+
+	# Bios
+	dataf$rowv <- as.character(dataf$rowv)
+	dataf$rown <- names(vv)[match(dataf$rowv, vv)]
+	
+	dataf$rvar <- factor(dataf$rown, levels = rev(names(vv)))
+	
+	
+	# Correlations
+	
+	cmat <- abs(cor(phyto[,pvars]))
+	dissim <- 1 - cmat
+	distance <- as.dist(dissim)
+	h <- hclust(distance)
+	dd.row <- as.dendrogram(h)
+	dx <- dendro_data(dd.row)
+	#plot(h)
+	
+	sn <- names(vv)[match(as.character(dx$labels$label),vv)]
+	dx$labels$label <- factor(sn, levels = sn)
+	dataf$dvar <- factor(dataf$rown, levels = dx$labels$label)
+	
+	
+	
+	ggdend <- function(df) {
+	  ggplot() +
+		geom_segment(data = df, aes(x=x, y=y, xend=xend, yend=yend),colour="light grey", size = 1.3) +
+		labs(x = "", y = "") + theme_minimal() +
+		theme(axis.text = element_blank(), axis.ticks = element_blank(),
+			  panel.grid = element_blank())
+	}
+		
+	the_dendro <- ggdend(dx$segments)+ coord_flip()
+	
+	
+cbPalette <- c("#999999", "#56B4E9", "#D55E00")
+the_plot <- ggplot(dataf, aes(y = dvar, x = factor(colv))) +	
+  geom_point(aes(size = size, colour = factor(color)))+
+  #theme with white background
+  theme_bw() +
+  #eliminates background, gridlines, and chart border
+  theme(
+    plot.background = element_blank()
+   # ,panel.grid.major = element_blank()
+   #,panel.grid.minor = element_blank()
+   ,panel.border = element_blank()
+   ,legend.position="none"
+   ,axis.ticks = element_blank()
+   ,axis.text.x = element_text(angle = 330, hjust = 0, colour = "grey50")
+   # ,axis.text.x = element_blank()
+   ,axis.text.y = element_text( hjust = 0, colour = "grey50")
+   ,axis.title.x = element_blank()
+   ,axis.title.y = element_blank()
+	)+
+	scale_colour_manual(values=cbPalette)	+
+    scale_size_continuous(range = c(0, 13)) 
+	# scale_size_area()
+	
+
+	png(file = 'C:/projects/phytolith/out/fig/model_importances.png', height= 10, width=10, units = 'in', res = 200)
+	#x11(height=10, width  =10)
+	grid.newpage()
+	print(the_plot, vp = viewport(.7,1, x = .35, y = .5))
+	print(the_dendro, vp=viewport(0.35, 1.001, x = 0.8, y = 0.523))
+	
+	
+	dev.off()
