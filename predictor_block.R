@@ -21,12 +21,15 @@ veg <- raster("C:/data/veg/calveg.grd")
 veg <- as.factor(round(veg))
 names(veg) <- 'veg'
 
+wc <- stack( lapply(
+					list.files( "C:/data/clim/wc2-5/", pattern = "prec.*?bil$",full = TRUE)[c(1,5:12,2:4)], raster )
+			)
 
 # get a mask of california for plotting results
 mask <- shapefile('C:/Users/steve/Downloads/GEO2015/13/counties_2000.shp')
 mask <- spTransform(mask, CRS(projection(bio)))
 
-
+wc <- crop(wc, mask)
 bio <- crop(bio, mask)
 bio4 <- crop(bio4, mask)
 bio6 <- crop(bio6, mask)
@@ -35,6 +38,7 @@ soil <- crop(soil, mask)
 veg <- crop(veg, mask)
 alt <- crop(alt, mask)
 
+wc <- resample(wc, alt, progress = 'text')
 bio <- resample(bio, alt, progress = 'text')
 bio4 <- resample(bio4, alt, progress = 'text')
 bio6 <- resample(bio6, alt, progress = 'text')
@@ -50,6 +54,9 @@ names(northness) <- 'northness'
 hillshade <- hillShade(slope, aspect,40, 20)
 
 
+summer_precip <- sum(wc[[5:9]])
+names(summer_precip) <- 'summer_precip'
+
 dcoast <- is.na(alt)
 dcoast[dcoast==0] <- NA
 dcoast <- distance(dcoast, progress = 'text')
@@ -57,7 +64,7 @@ dcoast <- distance(dcoast, progress = 'text')
 	#dcoast <- log(dcoast)
 names(dcoast) <- 'dcoast'
 
-block <- stack(hillshade, alt, slope,northness, eastness,  dcoast, veg, soil, bio, bio4, bio6, bio8)
+block <- stack(hillshade, alt, slope,northness, eastness,  dcoast, veg, soil,summer_precip, bio, bio4, bio6, bio8)
 names(block)[c(1,2)] <- c('hillshade','alt')
 
 #writeRaster(block, file = 'C:/projects/phytolith/data/predictors.grd', overwrite = TRUE)

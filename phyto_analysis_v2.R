@@ -39,6 +39,7 @@
   require(ggplot2)
   library(ggdendro)
   library(FNN)
+  library(grid)
 	
 
 ###################################################### 
@@ -81,6 +82,12 @@
 				lapply(
 					list.files( "C:/data/clim/wc2-5/", pattern = "prec.*?bil$",full = TRUE)[c(1,5:12,2:4)], raster )
 			)
+	
+	
+	  phyto$summer_precip <- rowSums( extract( wc, phyto[, c('lon','lat')])[, 5:9])
+	  clary$summer_precip <- rowSums( extract( wc, clary[, c('lon','lat')])[, 5:9])
+
+	
 	
 	#scaled data
 	j <- which( names(phyto) %in% c('series','County', 'phyto_pct', 'bilobate_star'))
@@ -229,10 +236,7 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
   #may-sept
   #? is this summer temperature though?
 
-  
-  phyto$summer_precip <- rowSums( extract( wc, phyto[, c('lon','lat')])[, 5:9])
-  clary$summer_precip <- rowSums( extract( wc, clary[, c('lon','lat')])[, 5:9])
-  
+    
   plot(phyto_pct ~ summer_precip, data = phyto[i,],  col = 'blue', lwd = 3,ylim = c(0,1), xlab = 'Summer precip (May-June)',ylab = 'Percent')
 
   points( p.grass.cover ~ summer_precip, col = 'red', pch = 4, lwd =3,data = clary )
@@ -498,7 +502,7 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
 			  'bio17', # = "Precipitation of Driest Quarter",
 			 'bio18', # = "Precipitation of Warmest Quarter",
 			 'bio19',  # = "Precipitation of Coldest Quarter" 
-			#'summer_precip',
+			'summer_precip',
 			'alt',
 			'dcoast'
 			)
@@ -970,9 +974,11 @@ levelplot(preds, contour = FALSE,par.settings=myTheme)
 	pal <- colorRampPalette( c( gray(.5), gray(1)))
 	pal <- function(x) { rainbow(x, alpha = .3) }
 	pal2 <- function(x) { rainbow(x, alpha = .7) }
+
 	
-	
+	# Remove aspect -- too weird
 	kp <- pvars[-c(2:3)]
+	# kp <- pvars
 	pca <-  princomp( sr[ ,kp], cor = TRUE)
 	
 	#Mkay how much variance do the PCs explain. Choose the # dimensions that make up 80$
@@ -988,15 +994,15 @@ levelplot(preds, contour = FALSE,par.settings=myTheme)
 	# find euclidean distance between each grid cell and nearest neighboring  cell in PC 1-3 space
 	
 	pa <- predict(pca, aggP[])
-	pa.hi <- predict(pca, predictors[])
-
+	
 	pr <- predict(pca, phyto[,kp])
 	pa.ok <- which(!apply(pa,1, function(x) any(is.na(x))))
-	pa.ok.hi <- which(!apply(pa.hi,1, function(x) any(is.na(x))))
-
 	dis <- knnx.dist( pr[,1:4],pa[pa.ok,1:4],1)
 	dis <- rowMeans(dis)
 	
+	
+	pa.hi <- predict(pca, predictors[])
+	pa.ok.hi <- which(!apply(pa.hi,1, function(x) any(is.na(x))))
 	dis.hi <- knnx.dist( pr[,1:4],pa.hi[pa.ok.hi,1:4],3)
 	dis.hi <- rowMeans(dis.hi)
 	
@@ -1043,6 +1049,17 @@ levelplot(preds, contour = FALSE,par.settings=myTheme)
 
 	levelplot(unc, contour = TRUE)
 	unc.hi <- unc
+	
+	# Apply this surface to predicted distribution
+	plot(unc)
+	out <- unc > 2
+	out2 <- 1/unc * out
+	int <- unc <= 2
+	int [ int[] < 1 ] <- NA 
+
+	plot(ens ,col = rev(terrain.colors(10, alpha = .4)), legend = F)
+	plot(ens * int,add = TRUE)
+	
 ##############################################################################################s
 ##############################################################################################s
 
