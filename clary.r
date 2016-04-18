@@ -2,7 +2,7 @@
 
 library(raster)
 
-z <- read.csv('C:/projects/phytolith/data/processed/clary_data.csv')
+# z <- read.csv('C:/projects/phytolith/data/processed/clary_data.csv')
 
 a <- read.csv('C:/projects/phytolith/data/raw/clary_transect.csv', check.names = FALSE)
 j <- read.csv('C:/projects/phytolith/data/raw/clary_transects_slope_aspect.csv', check.names = TRUE)
@@ -58,7 +58,7 @@ e <- as.data.frame(extract(b, sp))
 		
 e$slope <- e$northness <- e$eastness <- NULL
 e <- cbind(e.topo, e)
-a <- cbind(z,e)
+a <- cbind(a,e)
 a$dcoastkm <- a$dcoast/1000	
 
 names(a)[names(a)=='Long'] <- 'lon'

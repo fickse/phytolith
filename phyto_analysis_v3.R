@@ -40,6 +40,7 @@
   library(ggdendro)
   library(FNN)
   library(grid)
+  library(e1071)
 	
 
 ###################################################### 
@@ -73,7 +74,7 @@
 		# "bio_preind.8", "bio_preind.9", "bio_preind.10", "bio_preind.11", 
 		# "bio_preind.12", "bio_preind.13", "bio_preind.14", "bio_preind.15", 
 		# "bio_preind.16", "bio_preind.17", "bio_preind.18", "bio_preind.19"
-	# )
+	)
 	
 	aggP <- brick( agg_predictors)
 	names(aggP) <- names(predictors)
@@ -84,16 +85,44 @@
 			)
 	
 	
+	
 	  phyto$summer_precip <- rowSums( extract( wc, phyto[, c('lon','lat')])[, 5:9])
 	  clary$summer_precip <- rowSums( extract( wc, clary[, c('lon','lat')])[, 5:9])
 
 	
+# # # # # # # # # # # # # # # # # # # # # # 	
+	
+	the_y <- "phyto_pct"
+	log_adj <- .005
+	maxv <- 1 # maximum value map can take
+	
+	
+	the_y <- 'total_phyto1000gsoil'
+	log_adj <- 1
+	maxv <- 1500
+	
+	the_y <- "bilobates_per1000gsoil"
+	log_adj <- 1
+	maxv <- 1000
+	
+	the_y <- "bilobate_ratio"
+	log_adj <- .001
+	maxv <- 100
+	
+	the_y <- "short_cells_total_per1000gsoil"
+	log_adj <-1
+	maxv <- 2000
+	
+	
+# # # # # # # # # # # # # # # # # # # # # # 
 	
 	#scaled data
-	j <- which( names(phyto) %in% c('series','County', 'phyto_pct', 'bilobate_star'))
+	j <- which( names(phyto) %in% c('series','County', 'phyto_pct', 'bilobate_star', the_y))
 	phyto.scaled <- cbind( scale(phyto[,-j]), phyto[,j])
 	
-	
+	dir.create( paste0( 'C:/projects/phytolith/out/', the_y), F)
+	dir.create( paste0( 'C:/projects/phytolith/out/', the_y,'/tab'), F)
+	dir.create( paste0( 'C:/projects/phytolith/out/', the_y,'/fig'), F)
 	
 ######################################################
 
@@ -139,24 +168,9 @@
 
 	
 	
-######################################################
-
-# Ad Hoc    (FIX THESE FURTHER BACK IN PIPELINE)
-
-hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predictors$alt, opt = 'aspect'), 40, 270) 
+	spec <- colorRampPalette( c("#256EC2","#3D9ABE","#42C695","#5DD64B","#AEE34E","#DDEC53","#F8EE49","#F6D53A","#F5B52D","#EE8913","#E16310","#CB4707","#B61904","#9B0000") )
 
 ######################################################
-
-# Figure 0 : locations of points
-	x11(width = 8.677, height = 9.48)
-	plot(hillshade, col=grey(0:100/100, alpha = .5), legend=FALSE)
-	plot(predictors$alt, col=terrain.colors(25, alpha=0.35), add=TRUE, legend = FALSE)
-  
-#  map('county', 'california', col = rgb(.5,.5,.5,1), lwd = 1, add = TRUE)
-  points(phyto$lon, phyto$lat, cex = .5, lwd = .5,pch = 16, col = rgb(0,0,0,.7))
-  points(clary$lon, clary$lat, cex = 1, lwd = .5, pch = 4, col= rgb(0,0,1,.7))
-  legend('topright', legend = c( "Phytolith Abundance Data (Evett 2013)",'Grass Cover Data (Clary 2012)'), col = c('black','blue'), pch = c(16, 4))
-
 
 ######################################################
 
@@ -169,116 +183,19 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
 
   
   # Most of Evett's data follow the same pattern as clary, w.r.t distance from coast. 
-  plot(phyto$bilobate_ratio ~ phyto$dcoast)
-  plot(phyto$phyto_pct ~ phyto$dcoast)
-  plot(phyto$rondels_per1000gsoil ~ phyto$dcoast)
-  plot(phyto$bilobates_per1000gsoil ~ phyto$dcoast)
-  plot(phyto$total_phytoliths_1000g ~ phyto$dcoast)
-  plot(phyto$short_cells_total_per1000gsoil ~ phyto$dcoast)
+  plot(phyto[,the_y] ~ phyto$dcoast)
 
 
   # Plot of Perennial grass cover, annual grass cover and phytolith content as a function of distance from the coast. 
   # Phytolith content and perennial grass cover show the same pattern.
   
   i <- which(phyto$dcoast <= max(clary$dcoast))
-  
-  par(mar = c(5,5,4,2))
-  plot( clary$p.grass.cover~clary$dcoastkm, col = rgb(1,0,0,.4), pch = 4, lwd =3, ylim = c(0,1), xlab = 'Distance from Pacific Coast (km)',ylab = 'Percent')
-  points( clary$a.grass.cover~clary$dcoastkm, col = rgb(0,1,0,.4), pch = 3, lwd =3,  xlab = 'distance from coast',ylab = 'Percent')
-  points(phyto_pct ~ dcoastkm, data = phyto, ylab = '', col = rgb(0,0,1,.4), lwd = 3)
-
-
-	m.grass <- lm(clary$p.grass.cover~clary$dcoastkm)
-	abline( m.grass, col = 'red', lwd = 2)
-	summary(m.grass)
-
-	m.exotic <- lm(clary$a.grass.cover~clary$dcoastkm)
-	abline( m.exotic, col = 'green', lwd = 2)
-	
-	m.phyto <- lm(phyto_pct~dcoastkm,data= phyto[i,])
-	abline( m.phyto, col = 'blue', lwd = 2)
-  
-  legend('topright', legend = c('Perennial Grass Cover (Clary 2012)', 'Annual Grass Cover (Clary 2012)', 'Total Phytolith (Evett 2013)'), col = c('red','green', 'blue'), pch = c(4,3,1), lwd = 2, bg = 'white')
 
 
 #####################################################
 
-# Curiosity: cooling degree days is one of clary's variables that correlates very strongly with dcoast and seems to explain a lot of perennial grass cover variation
-
-  plot( clary$p.grass.cover~clary$Cooling.Degree.Days..Ann.from.)
-
-  plot( clary[, c('p.grass.cover', 'Cooling.Degree.Days..Ann.from.', 'alt', 'dcoast')])
-
-# what bioclim variable most strongly correlates to cooling degree days?
-
-  which.max(abs( unlist( lapply(clary[, paste0('bio', 1:19)], function(x) cor(x, clary$Cooling.Degree.Days..Ann.from.)))))
-
-  cor.test(clary$bio10, clary$Cooling.Degree.Days..Ann.from.)
-  cor.test(clary$dcoast, clary$Cooling.Degree.Days..Ann.from.)
-  
-  # Appears to be bio 10, 'mean temperature of warmest quarter'. This makes quite a bit of sense. Lets substitute bio 10 for dcoast  and remake the plot above...
-  
-  plot(phyto_pct ~ bio10, data = phyto,  col = 'blue', lwd = 3,ylim = c(0,1), xlab = 'Mean Summertime Temperature (.1 degree C)',ylab = 'Percent')
-
-  points( clary$p.grass.cover~clary$bio10, col = 'red', pch = 4, lwd =3, )
-   points( clary$a.grass.cover~clary$bio10, col = 'green', pch = 3, lwd =3,  xlab = 'distance from coast',ylab = 'Percent')
-  
-  abline( lm(clary$p.grass.cover~clary$bio10), col = 'red', lwd = 2)
-  abline( lm(clary$a.grass.cover~clary$bio10), col = 'green', lwd = 2)
-  abline( lm(phyto_pct~bio10,data= phyto[i,]), col = 'blue', lwd = 2)
-
-  polygon( c( 230, 230, 265, 265), c(.19, .63, .63, .18), lty = 2, lwd =3, border = rgb(.5,.5,.5,.5))
-  
-  legend('topright', legend = c('Perennial Grass Cover (Clary 2012)', 'Annual Grass Cover (Clary 2012)', 'Total Phytolith (Evett 2013)'), col = c('red','green', 'blue'), pch = c(4,3,1), lwd = 2, bg = 'white')
-
-  ############################
-  # lets do the same thing, only with precip in the warmest quarter)
-  #may-sept
-  #? is this summer temperature though?
-
-    
-  plot(phyto_pct ~ summer_precip, data = phyto[i,],  col = 'blue', lwd = 3,ylim = c(0,1), xlab = 'Summer precip (May-June)',ylab = 'Percent')
-
-  points( p.grass.cover ~ summer_precip, col = 'red', pch = 4, lwd =3,data = clary )
-  points( clary$a.grass.cover~clary$summer_precip, col = 'green', pch = 3, lwd =3,  xlab = 'distance from coast',ylab = 'Percent')
-  
-  abline( lm(clary$p.grass.cover~clary$summer_precip), col = 'red', lwd = 2)
-  abline( lm(clary$a.grass.cover~clary$summer_precip), col = 'green', lwd = 2)
-  abline( lm(phyto_pct~bio18,data= phyto[i,]), col = 'blue', lwd = 2)
-  
-  
-  cor.test(clary$p.grass.cover,clary$summer_precip)
-  cor.test(clary$a.grass.cover,clary$summer_precip)
-  cor.test(phyto$phyto_pct,phyto$summer_precip)
-  
-  legend('topright', legend = c('Perennial Grass Cover (Clary 2012)', 'Annual Grass Cover (Clary 2012)', 'Total Phytolith (Evett 2013)'), col = c('red','green', 'blue'), pch = c(4,3,1), lwd = 2, bg = 'white')
-  
-  
-  ########################
-  # Same thing,but for slope
-  
-  plot(phyto_pct ~ slope, data = phyto,  col = 'blue', lwd = 3,ylim = c(0,1), xlab = 'slope (degrees)',ylab = 'Percent', xlim = c(0, 7))
-	
-  points( p.grass.cover ~ slope, col = 'red', pch = 4, lwd =3,data = clary )
-  points( a.grass.cover ~ slope, data= clary, col = 'green', pch = 3, lwd =3,  xlab = 'distance from coast',ylab = 'Percent')
-  
-  abline( lm(clary$p.grass.cover~clary$slope), col = 'red', lwd = 2)
-  abline( lm(clary$a.grass.cover~clary$slope), col = 'green', lwd = 2)
-  abline( lm(phyto_pct~slope,data= phyto), col = 'blue', lwd = 2)
-  
-
-  
-  cor.test(clary$p.grass.cover,clary$slope)
-  cor.test(clary$a.grass.cover,clary$slope)
-  cor.test(phyto$phyto_pct,phyto$slope)
-  
-  
-  ########################
+ 
   # Testing for correlations among soil variables and responses
-  
-  i <- which(phyto$dcoast <= max(clary$dcoast))
-  
-  
   soilv <- c('Bulk Density' = 'bulk', 'Soil Carbon' ='carbon', 'CEC' =  'cec', 'pH' = 'ph','Coarse Debris' = 'coarse', 'Sand' = 'sand', 'Silt' = 'silt', 'Clay'= 'clay')
 
   topov <- c('Slope' = 'slope', 'Elevation' = 'alt', 'North-ness' = 'northness', 'East-ness' ='eastness', 'Coast Distance' = 'dcoast')
@@ -292,8 +209,8 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
   
    p.grass <- lapply( vv, function(x) cor.test( clary$p.grass.cover, clary[,x], method = method) )
    a.grass <- lapply( vv, function(x) cor.test( clary$a.grass.cover, clary[,x], method = method) )
-   phyto.cor <- lapply( vv, function(x) cor.test( phyto$phyto_pct,phyto[,x], method = method))
-   phytoC.cor <- lapply( vv, function(x) cor.test( phyto$phyto_pct[i],phyto[i,x], method = method ))
+   phyto.cor <- lapply( vv, function(x) cor.test( phyto[, the_y],phyto[,x], method = method))
+   phytoC.cor <- lapply( vv, function(x) cor.test( phyto[i,the_y],phyto[i,x], method = method ))
 
    get_cors <- function(x) {
 		n <- sprintf("%2.2f", round(x$estimate,2))
@@ -309,153 +226,9 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
 	row.names(cors) <- c('Perennial grass cover', 'Phytolith Content \n (Restricted Range)', 'Phytolith content \n (Full Range)', 'Annual grass cover')
 
 	t(cors)
-	print.xtable(xtable(t(cors)), type = 'html', file = 'C:/projects/phytolith/out/tab/variables_cor.html') 
-
-	######################
-	# Testing for correlations with topographic variables
-	topov <- c('slope', 'elev', 'northness', 'eastness')
-	
-	
-	
-  # cor.test(clary$p.grass.cover,clary$clay)
-  # cor.test(clary$a.grass.cover,clary$clay)
-  # cor.test(phyto$phyto_pct,phyto$clay)
-  
-  
-  ########################
-  # Ok, so for summer temps between 16 and ~22 degrees, they appear to follow the same trend.
-  # But whats up with the high phytolith values for some plots between 23 and and 26 degrees?
-  
-  # Attempting to map these out -- maybe cluster around some known feature?
-  
-  w <- which(phyto$phyto_pct > .21 & phyto$bio10 > 230 & phyto$bio10 < 260) 
-  
-  # plot(hillshade, col=grey(0:100/100, alpha = .5), legend=FALSE)
-  # plot(predictors$alt, col=terrain.colors(25, alpha=0.35), add=TRUE)
-  
-  map('county', 'california', col = rgb(0,0,0,.1), lwd = 1, fill = TRUE)
-  points(phyto$lon, phyto$lat, cex = 1, lwd = .5,pch = 16, col = rgb(0,0,0,.7))
-  points(phyto$lon[w], phyto$lat[w], cex = 2, lwd = 3,pch = 1, col = 'red')
-  
-  
-  # Yes! these all cluster around a couple of counties in the foothills: Stanislaus and Merced Counties. ? what could be going on there. May have to consult an expert.
-  # just for kicks, I wonder what the soil properties are like in these spots?
-
-  # carbon looks like nothing special...
-  plot(phyto$phyto_pct ~ phyto$carbon)
-  points(phyto$phyto_pct[w] ~ phyto$carbon[w], col = 'red', cex = 2, lwd =2)
-
-  # silt ok...
-  plot(phyto$phyto_pct ~ phyto$silt)
-  points(phyto$phyto_pct[w] ~ phyto$silt[w], col = 'red', cex = 2, lwd =2)
-  
-  # same with clay...
-  plot(phyto$phyto_pct ~ phyto$clay)
-  points(phyto$phyto_pct[w] ~ phyto$clay[w], col = 'red', cex = 2, lwd =2)
-  
-  #sand ok
-  plot(phyto$phyto_pct ~ phyto$sand)
-  points(phyto$phyto_pct[w] ~ phyto$sand[w], col = 'red', cex = 2, lwd =2)
-
-  #cec ok
-  plot(phyto$phyto_pct ~ phyto$cec)
-  points(phyto$phyto_pct[w] ~ phyto$cec[w], col = 'red', cex = 2, lwd =2)
-  
-  # not pH
-  plot(phyto$phyto_pct ~ phyto$ph)
-  points(phyto$phyto_pct[w] ~ phyto$ph[w], col = 'red', cex = 2, lwd =2)
+	print.xtable(xtable(t(cors)), type = 'html', file = paste0('C:/projects/phytolith/out/',the_y,'/tab/variables_cor.html')) 
 
 
-  # HMMM these values all tend to have a very low coarse-ness... but so do a lot of others
-  plot(phyto$phyto_pct ~ phyto$coarse)
-  points(phyto$phyto_pct[w] ~ phyto$coarse[w], col = 'red', cex = 2, lwd =2)
-  
-  # HMMM also tend to have a high bulk density
-  plot(phyto$phyto_pct ~ phyto$bulk)
-  points(phyto$phyto_pct[w] ~ phyto$bulk[w], col = 'red', cex = 2, lwd =2)
-  
-  #not alt
-  plot(phyto$phyto_pct ~ phyto$alt)
-  points(phyto$phyto_pct[w] ~ phyto$alt[w], col = 'red', cex = 2, lwd =2)
-  
-  #very flat
-  plot(phyto$phyto_pct ~ phyto$slope)
-  points(phyto$phyto_pct[w] ~ phyto$slope[w], col = 'red', cex = 2, lwd =2)
-  
-  #ugh, bioclim?
-  
-  biofun <- function(i) {
-	v <- paste0('bio',i)
-	plot(phyto$phyto_pct ~ phyto[,v], main = v)
-	points(phyto$phyto_pct[w] ~ phyto[w,v], col = 'red', cex = 2, lwd =2)
-	readline('ready?')
-  }
-  
-  for (n in 1:19) biofun(n)
-  
-  # doesn't seem to elucidate much.
-  
-  # how about a PCA of soil variables
-  
-  soilv <- c('bulk', 'carbon', 'cec', 'clay','coarse', 'ph', 'sand','silt')
-
-  pc <- princomp(phyto[, soilv], cor = TRUE)
-  biplot(pc)
-  plot(pc$scores[,1:2])
-  points(pc$scores[w,1:2], lwd = 5,col = 'red')
-  plot(pc$scores[,1:2],cex = 1 + scale(phyto$phyto_pct), lwd = 1,col = 'red')
-  
-  
-  # PCA for bioclim variables? probably not...
-  pc <- princomp(phyto[, paste0('bio',1:19)], cor = TRUE)
-  biplot(pc)
-  plot(pc$scores[,1:2])
-  points(pc$scores[w,1:2], col = 'red', lwd =5 )
-  plot(pc$scores[,1:2],cex = 1 + scale(phyto$phyto_pct), lwd = 1,col = 'red')
-  points(pc$scores[w,1:2],pch = 16,cex = 1 + scale(phyto$phyto_pct), lwd = 1,col = rgb(1,0,0,.3))
-  
-  # Maybe I should just map them...
-  library(plotKML)
-  sp <- phyto[w,]
-  coordinates(sp) <- ~ lon + lat
-  projection(sp) <- CRS("+init=epsg:4326") 
-  plotKML(sp)
-
-##################################################################
-##################################################################
-
-# Another Curiosity: How well are is the range of bioclimatic and soil characteristics
-# sampled? 
-
-# This should determine how certain we are about extrapolating to certain areas within the state!
-	
-    sr <- sampleRandom(predictors, 3000, xy = TRUE)
-	#i <- which(sr[,'alt'] < 1200 & sr[,'bio4'] < 7500)
-	i <- 1:nrow(sr)
-	pcr <- princomp( sr[i ,c( paste0('bio',c(1:19)), 'ph', 'bulk', 'sand','clay','silt','cec')], cor = TRUE)
-	pcr <- princomp( sr[i ,pvars], cor = TRUE)
-	biplot(pcr, xlabs = rep('', length(i)), scale = .7)
-	
-	plot(pcr$scores[,1:2], cex = .25, col = rgb(0,0,0,.5), pch = 16)
-	pr <- predict( pcr, phyto)
-	points(pr, pch = 1, col = rgb(1,0,0,1),cex = 2 + scale(phyto$phyto_pct), lwd = 1)
-	points(pr, pch = 16, col = rgb(1,0,0,.05),cex = 2 + scale(phyto$phyto_pct), lwd = 1)
-	summary(pcr)
-	
-	
-	j <- rbind(pcr$scores[,1:3], pr[,1:3])
-	#library(rgl)
-	plot3d(j, col = c(rep('black', nrow(pcr$scores)), rep('red', nrow(pr))))
-
-	
-	
-	map('state','california')
-	points(sr[i,c('x','y')], cex = .5, pch = 16, col = rgb(0,0,0,.5))
-	points(phyto[,c('lon','lat')], pch = 1, col = rgb(1,0,0,.8), lwd = 2)
-	
-	
-	# the samples do a decent job sampling the climate/soil space of inland and coastal california
-	
 ##################################################################
 ##################################################################
 
@@ -477,8 +250,8 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
  
  pvars <- c(
 			'slope',
-			'northness',
-			'eastness',
+		#	'northness',
+		#	'eastness',
 			'bulk', 
 			#'carbon',
 			'ph',
@@ -507,20 +280,22 @@ hillshade <- hillShade( terrain( predictors$alt, opt = 'slope'), terrain( predic
 			 'bio18', # = "Precipitation of Warmest Quarter",
 			 'bio19',  # = "Precipitation of Coldest Quarter" 
 			'summer_precip',
-			'alt',
-			'dcoast'
+			#'alt',
+			'dcoast',
+			'awc',
+			'wetland'
 			)
 
 f1.gam <- as.formula( 
 		paste0(
-			"I(log(phyto_pct+ .005)) ~ s(", 
+			"I(log(", the_y, "+", log_adj, ")) ~ s(", 
 				paste( pvars, collapse = ') + s('), ')'
 			)
 		)
 
 f1 <- as.formula( 
 		paste0(
-			"I(log(phyto_pct+ .005)) ~ ", 
+			"I(log(", the_y,"+", log_adj, ")) ~ ", 
 				paste( pvars, collapse = ' + ')
 			)
 		)
@@ -559,7 +334,7 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 
 # Random Forest
 
-	rf <- randomForest( y = log(phyto[,'phyto_pct'] + .005), x = phyto[, pvars], ntree = 10000, mtry = 2)
+	rf <- randomForest( y = log(phyto[,the_y] + log_adj ), x = phyto[, pvars], ntree = 10000, mtry = 2)
 	rf
 	varImpPlot(rf)
 
@@ -568,17 +343,17 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	rfc
 	varImpPlot(rfc)
 	
-	p.rf <- exp(predict(aggP, rf, progress = 'text'))
+	p.rf <- explain(predict(aggP, rf, progress = 'text'))
 	p.rfc <- predict(aggP, rfc, progress = 'text')
 	
-	spplot(stack(p.rf, p.rfc))
-	
+	# spplot(stack(p.rf, p.rfc))
+	plot(p.rf)
 	pred.phyto$rf <-  predict(rf)
 	pred.clary$rf <- predict(rfc)
 	
 	
 	
-	moran.phyto$rf <- moran( log(phyto$phyto_pct + .005) - predict(rfc), phyto[, c('lon','lat')] )
+	moran.phyto$rf <- moran( log(phyto[,the_y] + log_adj ) - predict(rfc), phyto[, c('lon','lat')] )
 	
 	moran.clary$rf <- moran( clary$p.grass.cover - predict(rfc), clary[, c('lon','lat')] )
 	
@@ -598,12 +373,12 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	for (j in 1:k){
 			train <- which(k.p != j)
 			test <- which( k.p == j)
-			rf <- randomForest( y = log(phyto[train,'phyto_pct'] + .005), x = phyto[train, pvars], ntree = 5000, mtry = 2)
-			out[[j]] <- predict(rf, newdata=phyto[test,pvars])        
+			rfj <- randomForest( y = log(phyto[train,the_y] + log_adj ), x = phyto[train, pvars], ntree = 5000, mtry = 2)
+			out[[j]] <- predict(rfj, newdata=phyto[test,pvars])        
 	}
 	
 	out <- unlist(out)
-	rf.phyto.cv <- list ( p =  out[order(as.numeric(names(out)))], o = log(phyto[,'phyto_pct'] + .005))
+	rf.phyto.cv <- list ( p =  out[order(as.numeric(names(out)))], o = log(phyto[,the_y] + log_adj ))
 	
 	# perennial grass data
 	
@@ -611,8 +386,8 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	for (j in 1:k){
 			train <- which(k.c != j)
 			test <- which( k.c == j)
-			rf <- randomForest( y = clary$p.grass.cover[train] , x = clary[train, pvars], ntree = 5000, mtry = 2)
-			out[[j]] <- predict(rf, newdata=clary[test,pvars])        
+			rfj <- randomForest( y = clary$p.grass.cover[train] , x = clary[train, pvars], ntree = 5000, mtry = 2)
+			out[[j]] <- predict(rfj, newdata=clary[test,pvars])        
 	}
 	out <- unlist(out)
 	rf.clary.cv <- list ( p =  out[order(as.numeric(names(out)))], o = clary$p.grass.cover)
@@ -622,7 +397,7 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 
 # GAM
 
-	f1.gam <- I(log(phyto_pct + .005)) ~  s(dcoast) + s(bio1) + s(bio7) + s(bio12) + s(bio3) + s(northness) + s(eastness)+ s(slope) + s(ph) + s(bulk) + s(alt) 
+	f1.gam <- I(log(phyto[,the_y] + log_adj )) ~  s(dcoast) + s(bio1) + s(bio7) + s(bio12) + s(bio3) + s(northness) + s(eastness)+ s(slope) + s(ph) + s(bulk) + s(alt) 
 	f2.gam <- update(f1, p.grass.cover ~ .)
 	
 	g <- gam(f1.gam, data = phyto,select = TRUE)
@@ -640,7 +415,7 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	pred.phyto$gam <-  predict(g)
 	pred.clary$gam <- predict(g.c)
 	
-	moran.phyto$gam <- moran( log(phyto$phyto_pct + .001) - predict(g), phyto[, c('lon','lat')] )
+	moran.phyto$gam <- moran( log(phyto[,the_y] + log_adj )- predict(g), phyto[, c('lon','lat')] )
 	moran.clary$gam <- moran( clary$p.grass.cover - predict(g.c) , clary[, c('lon','lat')] )
 	
 	
@@ -662,7 +437,7 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	}
 	
 	out <- unlist(out)
-	gam.phyto.cv <- list ( p =  out[order(as.numeric(names(out)))], o = log(phyto[,'phyto_pct'] + .005))
+	gam.phyto.cv <- list ( p =  out[order(as.numeric(names(out)))], o = log(phyto[,the_y] + log_adj ))
 	
 	# perennial grass data
 	
@@ -701,7 +476,7 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 
 	# lasso Regression
 
-	lso = glmnet( as.matrix(phyto[, pvars]),log(phyto[,'phyto_pct'] + .005),alpha =1, lambda =  cv.glmnet (as.matrix(as.matrix(phyto[, pvars])),log(phyto[,'phyto_pct'] + .005),alpha =1)$lambda.min )
+	lso = glmnet( as.matrix(phyto[, pvars]),log(phyto[,the_y] + log_adj ),alpha =1, lambda =  cv.glmnet (as.matrix(as.matrix(phyto[, pvars])),log(phyto[,the_y] + log_adj ),alpha =1)$lambda.min )
 
 	
 	lso.c = glmnet( as.matrix(clary[, pvars]),clary$p.grass.cover,alpha =1, lambda =  cv.glmnet (as.matrix(as.matrix(clary[, pvars])),clary$p.grass.cover,alpha =1)$lambda.min )
@@ -710,7 +485,6 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	
 	p.lso <- exp(predict.gnet(aggP, lso))
 	p.lsoc <- predict.gnet(aggP, lso.c)
-	dotchart(lso$beta)
 	
 	plot(p.lso)
 	plot(p.lsoc)
@@ -720,7 +494,7 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	pred.phyto$lasso <- predict(lso, newx = as.matrix(phyto[,pvars]))
 	pred.clary$lasso <- predict(lso.c, newx = as.matrix(clary[,pvars]))
 	
-	moran.phyto$lasso <- moran( log(phyto$phyto_pct + .005) - pred.phyto$lasso, phyto[, c('lon','lat')] )
+	moran.phyto$lasso <- moran( log(phyto[,the_y] + log_adj ) - pred.phyto$lasso, phyto[, c('lon','lat')] )
 
 	moran.clary$lasso <- moran( clary$p.grass.cover - pred.clary$lasso, clary[, c('lon','lat')] )
 	
@@ -738,12 +512,12 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	for (j in 1:k){
 			train <- which(k.p != j)
 			test <- which( k.p == j)
-			lsoj = glmnet( as.matrix(phyto[train, pvars]),log(phyto[train,'phyto_pct'] + .005),alpha =1, lambda =  cv.glmnet (as.matrix(as.matrix(phyto[train, pvars])),log(phyto[train,'phyto_pct'] + .005),alpha =1)$lambda.min )
+			lsoj = glmnet( as.matrix(phyto[train, pvars]),log(phyto[train,the_y] + log_adj ),alpha =1, lambda =  cv.glmnet (as.matrix(as.matrix(phyto[train, pvars])),log(phyto[train,the_y] + log_adj ),alpha =1)$lambda.min )
 			out[test] <- as.vector( predict(lsoj, newx=as.matrix(phyto[test,pvars])) )       
 	}
 	
 	
-	lso.phyto.cv <- list ( p =  out, o = log(phyto[,'phyto_pct'] + .005))
+	lso.phyto.cv <- list ( p =  out, o = log(phyto[,the_y] + log_adj ))
 	
 	# perennial grass data
 	
@@ -758,6 +532,19 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	
 	lso.clary.cv <- list ( p =  out, o = clary$p.grass.cover)
 		
+######################################################################
+######################################################################
+	# SVM
+	
+
+	t.out <- tune("svm", f1 , data = phyto, ranges = list(cost = c(.1,1,10,100,1000), gamma = c(.5, 1, 2, 3,4)) )
+	sv <- svm( f1, data = phyto, cost = t.out$best.parameters$cost, gamma = t.out$best.parameter$gamma)
+	sv <- svm( f1, data = phyto, cost = 1, gamma = .001)
+	p.sv <- exp(predict(aggP, sv))
+	plot(p.sv)
+	plot(p.sv)
+
+
 ######################################################################
 ######################################################################
 
@@ -776,14 +563,13 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	p.ct <- exp(predict(aggP, ct))
 	p.ctc <- predict(aggP, ctc)
 
-	plot(p.ct)
-	plot(p.ctc)
+	spplot(stack(p.ct,p.ctc))
 
 	
 	pred.phyto$cart <-  predict(ct)
 	pred.clary$cart <- predict(ctc)
 	
-	moran.phyto$cart <- moran( log(phyto$phyto_pct + .005) - predict(ct), phyto[, c('lon','lat')] )
+	moran.phyto$cart <- moran( log(phyto[,the_y] + log_adj ) - predict(ct), phyto[, c('lon','lat')] )
 	moran.clary$cart <- moran( clary$p.grass.cover - predict(ctc) , clary[, c('lon','lat')] )
 	
 	
@@ -805,7 +591,7 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	}
 	
 	out <- unlist(out)
-	cart.phyto.cv <- list ( p =  out[order(as.numeric(names(out)))], o = log(phyto[,'phyto_pct'] + .005))
+	cart.phyto.cv <- list ( p =  out[order(as.numeric(names(out)))], o = log(phyto[,the_y] + log_adj ))
 	
 	# perennial grass data
 	
@@ -826,20 +612,20 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 
 #OLS
 
-	ols = stepAIC(lm(f1, data = phyto))
+	ols = stepAIC(lm(f1, data = phyto), direction = 'both')
 	olsc = stepAIC(lm(f2, data = clary))
 
-	p.ols <- exp(predict(aggP, ols))-.005
+	p.ols <- exp(predict(aggP, ols))-log_adj
 	p.olsc <- predict(aggP, ols)
 
-	plot(p.ct)
-	plot(p.ctc)
+	spplot(stack(p.ols))
+#	,p.olsc))
 
 	
 	pred.phyto$ols <-  predict(ols)
 	pred.clary$ols <- predict(olsc)
 	
-	moran.phyto$ols <- moran( log(phyto$phyto_pct + .005) - predict(ols), phyto[, c('lon','lat')] )
+	moran.phyto$ols <- moran( log(phyto[,the_y] + log_adj ) - predict(ols), phyto[, c('lon','lat')] )
 	moran.clary$ols <- moran( clary$p.grass.cover - predict(ols) , clary[, c('lon','lat')] )
 	
 	###################
@@ -859,7 +645,7 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 	}
 	
 	out <- unlist(out)
-	ols.phyto.cv <- list ( p =  out[order(as.numeric(names(out)))], o = log(phyto[,'phyto_pct'] + .005))
+	ols.phyto.cv <- list ( p =  out[order(as.numeric(names(out)))], o = log(phyto[,the_y] + log_adj ))
 	
 	# perennial grass data
 	
@@ -881,17 +667,17 @@ f2.gam <- update(f1.gam, p.grass.cover ~ .)
 # Cross Validation Results (!)
 
 cv.phy <- list ( 'Random Forest' = rf.phyto.cv$p,
-				 'CART' = cart.phyto.cv$p,
+				# 'CART' = cart.phyto.cv$p,
 				 'GAM' = gam.phyto.cv$p,
 				 'Lasso' = lso.phyto.cv$p,
 				 'OLS' = ols.phyto.cv$p
 				)
 
 cv.clary <- list('Random Forest' = rf.clary.cv$p,
-				 'CART' = cart.clary.cv$p,
+				# 'CART' = cart.clary.cv$p,
 				 'GAM' = gam.clary.cv$p,
 				 'Lasso' = lso.clary.cv$p,
-				 'OLS' = ols.clary.cv$p
+				 'OLS' = ols.phyto.cv$p
 				)
 				
 				
@@ -909,8 +695,8 @@ cv.clary <- list('Random Forest' = rf.clary.cv$p,
 	# out <- unlist(out)
 	# cv.phy[['Ensemble']] <- out[order(as.numeric(names(out)))]
 
-cv.phy <- lapply(cv.phy, function(x) exp(x) + .001)
-obs <- exp(rf.phyto.cv$o) + .001
+cv.phy <- lapply(cv.phy, function(x) exp(x) + log_adj)
+obs <- exp(rf.phyto.cv$o) + log_adj
 
 (stats <- t(cv_phy <- rbind(	
 		'cor' = sapply(cv.phy, function(x) cor(x, obs)),
@@ -919,38 +705,41 @@ obs <- exp(rf.phyto.cv$o) + .001
 		'MAE' = sapply(cv.phy, function(x) mean( abs(x - obs))),
 		'ME' = sapply(cv.phy, function(x) mean( x - obs)),
 		'Median' = sapply(cv.phy, function(x) median( x - obs)),
-		'I' = sapply(moran.phyto, function(x)  round(x$statistic,4))
+		'I' = sapply(moran.phyto, function(x)  round(x$p.value,4))
 	)))
 
 	
-print.xtable( xtable(stats, digits = c(1,2,2,2,2,2,2,4)), type = 'html', file = 'C:/projects/phytolith/out/tab/validation_stats.html')
+print.xtable( xtable(stats, digits = c(1,4,4,2,2,2,2,4)), type = 'html', file = paste0('C:/projects/phytolith/out/',the_y,'/tab/validation_stats.html'))
 	
 	
 # are they correlated?
 cor(do.call(cbind,cv.phy))
 
 # residual correlations
-resid_cors <- cor(do.call( cbind, lapply(pred.phyto, function(x) x - log(phyto$phyto_pct + .005)) ))
+resid_cors <- cor(do.call( cbind, lapply(pred.phyto, function(x) x - log(phyto[,the_y] + log_adj )) ))
 
 row.names(resid_cors) <- colnames(resid_cors) <- names(pred.phyto)
-print.xtable( xtable( resid_cors, digits = 2), type = 'html', file = 'C:/projects/phytolith/out/tab/residual_correlations.html')
+print.xtable( xtable( resid_cors, digits = 2), type = 'html', file = paste0('C:/projects/phytolith/out/',the_y,'/tab/residual_correlations.html'))
 
 
 
 
 
-ROW <-2  # cor
-ens <- p.lso*cv_phy[ROW,4]  +  p.ct* cv_phy[ROW,2] + p.g * cv_phy[ROW,3] + p.rf*cv_phy[ROW,1] + p.ols*cv_phy[ROW,5]
-ens <- ens / sum(cv_phy[ROW,])
+ROW <-2  # R2
+ens <- p.lso*abs(cv_phy[ROW,'Lasso'])   + p.g * abs(cv_phy[ROW,"GAM"]) + p.rf*abs(cv_phy[ROW,"Random Forest"]) + p.ols*abs(cv_phy[ROW,"OLS"])
+ens <- ens / sum(abs(cv_phy[ROW,]))
 
 plot(ens)
-ens[ens[] > 1] <- 1
-plot(ens)
+ens[ens[] > maxv] <- maxv
 
-points(phyto[, c('lon','lat')], cex = 1 + phyto$phyto_pct^3)
+png( file = paste0('C:/projects/phytolith/out/', the_y, 'fig/quickEnsemble.png'))
+plot(ens)
+points(phyto[, c('lon','lat')], cex = 1)
+
+dev.off()
 
 p.ens <- extract(ens, phyto[, c('lon','lat')])
-t.ens <- c( 'cor' = cor( p.ens, obs), 
+c( 'cor' = cor( p.ens, obs), 
 	'R2' = cor( p.ens, obs)**2,
 	'rmse' = sqrt(mean( (p.ens - obs)^2)),
 	'MAE' = mean( abs(p.ens - obs)),
@@ -959,116 +748,9 @@ t.ens <- c( 'cor' = cor( p.ens, obs),
 	'I' = round(moran( p.ens - obs, phyto[, c('lon','lat')] )$statistic,4)
 	)
 
-print.xtable( xtable( rbind(t.ens)), file = 'C:/projects/phytolith/out/tab/ensemble_stats.html', type = 'html')
 
-##############################################################################################s
-##############################################################################################s
-
-preds <- stack( p.rf, p.ct, p.g, p.ols, p.lso, ens)
-preds[preds[]>1] <- 1
-names(preds) <- c('Random Forest', 'CART', 'GAM', 'OLS', 'Lasso', 'Ensemble')
-myTheme=rasterTheme(region=rev(rainbow(10)))
-levelplot(preds, contour = FALSE,par.settings=myTheme)
-	
-
-##############################################################################################s
-##############################################################################################s
-
-	white_red <- colorRampPalette(c(rgb(1,0,0,.1), rgb(0,0,1,.5)), alpha = TRUE)
-	pal <- colorRampPalette( c( rgb(0,0,0,.1), rgb(0,0,0,.5)), alpha = TRUE)
-	pal <- colorRampPalette( c( gray(.5), gray(1)))
-	pal <- function(x) { rainbow(x, alpha = .3) }
-	pal2 <- function(x) { rainbow(x, alpha = .7) }
-
-	
-	# Remove aspect -- too weird
-	kp <- pvars[-c(2:3)]
-	# kp <- pvars
-	pca <-  princomp( sr[ ,kp], cor = TRUE)
-	
-	#Mkay how much variance do the PCs explain. Choose the # dimensions that make up 80$
-	summary(pca)
-	# 3 dimensions
-	
-	loads <- with(pca, unclass(loadings))
-	
-	interesting <- c( 'Annual Temp' = 'bio1', "Precip Seasonality" = 'bio15', 'Elevation' = 'alt',  'Annual Precipitation' = 'bio12', "Dry Season Precip." = 'bio17', 'pH'  = 'ph', 'CEC' = 'cec', "Sand" = 'sand')
-
-	
-	
-	# find euclidean distance between each grid cell and nearest neighboring  cell in PC 1-3 space
-	
-	pa <- predict(pca, aggP[])
-	
-	pr <- predict(pca, phyto[,kp])
-	pa.ok <- which(!apply(pa,1, function(x) any(is.na(x))))
-	dis <- knnx.dist( pr[,1:4],pa[pa.ok,1:4],1)
-	dis <- rowMeans(dis)
-	
-	
-	pa.hi <- predict(pca, predictors[])
-	pa.ok.hi <- which(!apply(pa.hi,1, function(x) any(is.na(x))))
-	dis.hi <- knnx.dist( pr[,1:4],pa.hi[pa.ok.hi,1:4],3)
-	dis.hi <- rowMeans(dis.hi)
-	
-	
-	# Map this to 2d space. 
-
-	unc <- aggP[[1]]
-	unc[] <- NA
-	unc[pa.ok] <- dis
-
-	unc.hi <- predictors[[1]]
-	unc.hi[] <- NA
-	unc.hi[pa.ok.hi] <- dis.hi
-	
-	brks <- c(seq(0, 12, length.out = 13))
-	
-	
-	png(file = 'C:/projects/phytolith/out/fig/pca.png', width = 13, height = 8.5, unit = 'in', res = 200)
-	par(mfrow = c(1,2))
-	plot(pa[pa.ok,1:2], cex = .1 + dis, pch = 16, col = pal(12)[cut(dis,brks, right = FALSE)], xlab = 'PCA 1', ylab = 'PCA 2')
-	
-	# plot(pa.hi[pa.ok.hi,1:2], cex = .1 + dis.hi, pch = 16, col = rev(rainbow(5, alpha = .5))[cut(dis.hi,brks, right = FALSE)], xlab = 'PCA 1', ylab = 'PCA 2')
-
-	
-	sapply(interesting, function(x) {
-		i <- which(x == row.names(loads))
-#		text( loads[i,1]*pca$scale[i]**.85, loads[i,2]* pca$scale[i]**.85, x)
-		text( loads[i,1]*20, loads[i,2]*20, names(interesting)[match(x,interesting)])
-	})
-	
-	
-	
-#	points(pr[,1:2], cex = .1 + phyto$phyto_pct, pch = 3, lwd = 1.5, col = rgb(0,0,0,1))
-	points(pr[,1:2], cex =  1 + 2*phyto$phyto_pct/max(phyto$phyto_pct), pch = 1, col = rgb(0,0,0,1))
-		#library(rgl)
-	#plot3d(pa[pa.ok,], col = terrain.colors(5)[cut(dis,5)], cex = 2)
-
-	
-	plot(unc.hi , col = pal2(12), breaks = brks)
-	points(phyto[,c('lon','lat')], cex = 2, pch =3, lwd = 1.5, col = rgb(0,0,0,.3))
-	points(phyto[,c('lon','lat')], cex = .5, pch =1, lwd = 1.5, col = rgb(0,0,0,.2))
-	
-	dev.off()
-
-	levelplot(unc, contour = TRUE)
-	unc.hi <- unc
-	
-	# Apply this surface to predicted distribution
-	plot(unc)
-	out <- unc > 2
-	out2 <- 1/unc * out
-	int <- unc <= 2
-	int [ int[] < 1 ] <- NA 
-
-	plot(ens ,col = rev(terrain.colors(10, alpha = .4)), legend = F)
-	plot(ens * int,add = TRUE)
-	
-##############################################################################################s
-##############################################################################################s
-
-
+##############################################################################################
+##############################################################################################
 	
 # Variable Importance
 
@@ -1189,62 +871,166 @@ the_plot <- ggplot(dataf, aes(y = dvar, x = factor(colv))) +
 	
 	
 	dev.off()
+######################################################################################	
+######################################################################################	
+	# Fancy
+	p.rff <- exp(predict(predictors, rf, progress = 'text'))
+	p.ctf <- exp(predict(predictors, ct, progress = 'text'))
+	p.gf <- exp(predict(predictors,g, progress = 'text'))
+	p.lsof <- exp(predict.gnet(predictors, lso))
+	p.olsf <- exp(predict(predictors, ols, progress = 'text'))
+	
+	p.lsofa <- p.lsof
+
+
+	p.lsofa[p.lsofa> 1000] <- 1000
+	
+	ROW <-1  # cor
+	ens.f <- 
+			p.rff * abs(cv_phy[ROW,1]) +
+			p.ctf* abs(cv_phy[ROW,2])  + 
+			p.gf * abs(cv_phy[ROW,3])  + 		
+			p.lsofa*abs(cv_phy[ROW,4])  +  
+			p.olsf * abs(cv_phy[ROW,5])*0
+			
+			
+	ens.f <- ens.f / sum(abs(cv_phy[ROW,]))
+
+	
+	# Now to Find PC distances
+    sr <- sampleRandom(predictors, 3000, xy = TRUE)
+	kp <- pvars[-which(pvars %in% c('northness','eastness'))]
+	pca <-  princomp( sr[ ,kp], cor = TRUE)
+	pr <- predict(pca, phyto[,kp])
+	pa.hi <- predict(pca, predictors[])
+	pa.ok.hi <- which(!apply(pa.hi,1, function(x) any(is.na(x))))
+	dis.hi <- knnx.dist( pr[,1:4],pa.hi[pa.ok.hi,1:4],3)
+	dis.hi <- rowMeans(dis.hi)
+	unc.hi <- predictors[[1]]
+	unc.hi[] <- NA
+	unc.hi[pa.ok.hi] <- dis.hi
+	
+	# Apply this surface to predicted distribution
+	inside <- unc.hi >= 3
+	inside [ inside[] < 1 ] <- NA 
+
+	# plot(ens.f*unc.hi)
+	# maxv <- 2500 
+	ens.f[ens.f > maxv] <- maxv
+#	plot(ens.f ,col = spec(100),alpha = .7, legend = F)
+	
+	png( width = 7.281250 , height = 8.427083, units = 'in', res = 250, file = paste0('C:/projects/phytolith/out/',the_y,'/fig/ensemble.png'))
+		plot(ens.f , col = rev(grey(0:100/100)))
+		plot(inside, col = rainbow(1), alpha = .2, add = TRUE, legend = F)
+	dev.off()
+##############################################################################################s
+##############################################################################################s
+
+preds <- list( p.rff, p.ctf, p.gf,p.olsf, p.lsof, ens.f)
+preds <- stack( lapply(preds, function(x) { x[x> maxv] <- maxv;x}))
+
+names(preds) <- c('Random Forest', 'CART', 'GAM', 'OLS', 'Lasso', 'Ensemble')
+myTheme=rasterTheme(region=spec(100))
+
+png(width = 12.989583, height = 9.479167, units = 'in', res = 250, file = paste0('C:/projects/phytolith/out/',the_y,'/fig/models.png'))
+levelplot(preds, contour = FALSE,par.settings=myTheme)
+dev.off()
+
+##############################################################################################s
+##############################################################################################s
+
+	white_red <- colorRampPalette(c(rgb(1,0,0,.1), rgb(0,0,1,.5)), alpha = TRUE)
+	pal <- colorRampPalette( c( rgb(0,0,0,.1), rgb(0,0,0,.5)), alpha = TRUE)
+	pal <- colorRampPalette( c( gray(.5), gray(1)))
+	pal <- function(x) { rainbow(x, alpha = .3) }
+	pal2 <- function(x) { rainbow(x, alpha = .7) }
+
+	
+	# Remove aspect -- too weird
+	kp <- pvars[-c(2:3)]
+	# kp <- pvars
+	pca <-  princomp( sr[ ,kp], cor = TRUE)
+	
+	#Mkay how much variance do the PCs explain. Choose the # dimensions that make up 80$
+	summary(pca)
+	# 3 dimensions
+	
+	loads <- with(pca, unclass(loadings))
+	
+	interesting <- c( 'Annual Temp' = 'bio1', "Precip Seasonality" = 'bio15', 'Elevation' = 'alt',  'Annual Precipitation' = 'bio12', "Dry Season Precip." = 'bio17', 'pH'  = 'ph', 'CEC' = 'cec', "Sand" = 'sand')
+
 	
 	
-#############################
-###############################
-# modern grass
-
-obs <- clary$p.grass.cover
-
-(stats <- t(cv_clary <- rbind(	
-		'cor' = sapply(cv.clary, function(x) cor(x, obs)),
-		'R2' = sapply(cv.clary, function(x) cor(x, obs)**2),
-		'rmse' = sapply(cv.clary, function(x) sqrt(mean( (x - obs)^2))),
-		'MAE' = sapply(cv.clary, function(x) mean( abs(x - obs))),
-		'ME' = sapply(cv.clary, function(x) mean( x - obs)),
-		'Median' = sapply(cv.clary, function(x) median( x - obs)),
-		'I' = sapply(moran.phyto, function(x)  round(x$statistic,4))
-	)))
-
+	# find euclidean distance between each grid cell and nearest neighboring  cell in PC 1-3 space
 	
-print.xtable( xtable(stats, digits = c(1,2,2,2,2,2,2,4)), type = 'html', file = 'C:/projects/phytolith/out/tab/clary_validation_stats.html')
+	pa <- predict(pca, aggP[])
+	
+	pr <- predict(pca, phyto[,kp])
+	pa.ok <- which(!apply(pa,1, function(x) any(is.na(x))))
+	dis <- knnx.dist( pr[,1:4],pa[pa.ok,1:4],1)
+	dis <- rowMeans(dis)
 	
 	
-# are they correlated?
-cor(do.call(cbind,cv.clary))
+	pa.hi <- predict(pca, predictors[])
+	pa.ok.hi <- which(!apply(pa.hi,1, function(x) any(is.na(x))))
+	dis.hi <- knnx.dist( pr[,1:4],pa.hi[pa.ok.hi,1:4],3)
+	dis.hi <- rowMeans(dis.hi)
+	
+	
+	# Map this to 2d space. 
 
-# residual correlations
-resid_cors <- cor(do.call( cbind, lapply(pred.clary, function(x) x - obs) ))
+	unc <- aggP[[1]]
+	unc[] <- NA
+	unc[pa.ok] <- dis
 
-row.names(resid_cors) <- colnames(resid_cors) <- names(pred.phyto)
-print.xtable( xtable( resid_cors, digits = 2), type = 'html', file = 'C:/projects/phytolith/out/tab/clary_residual_correlations.html')
+	unc.hi <- predictors[[1]]
+	unc.hi[] <- NA
+	unc.hi[pa.ok.hi] <- dis.hi
+	
+	brks <- c(seq(0, 12, length.out = 13))
+	
+	
+	png(file = paste0('C:/projects/phytolith/out/',the_y,'/fig/pca.png'), width = 13, height = 8.5, unit = 'in', res = 200)
+	par(mfrow = c(1,2))
+	plot(pa[pa.ok,1:2], cex = .1 + dis, pch = 16, col = pal(12)[cut(dis,brks, right = FALSE)], xlab = 'PCA 1', ylab = 'PCA 2')
+	
+	# plot(pa.hi[pa.ok.hi,1:2], cex = .1 + dis.hi, pch = 16, col = rev(rainbow(5, alpha = .5))[cut(dis.hi,brks, right = FALSE)], xlab = 'PCA 1', ylab = 'PCA 2')
 
+	
+	sapply(interesting, function(x) {
+		i <- which(x == row.names(loads))
+#		text( loads[i,1]*pca$scale[i]**.85, loads[i,2]* pca$scale[i]**.85, x)
+		text( loads[i,1]*20, loads[i,2]*20, names(interesting)[match(x,interesting)])
+	})
+	
+	
+	
+#	points(pr[,1:2], cex = .1 + phyto$phyto_pct, pch = 3, lwd = 1.5, col = rgb(0,0,0,1))
+	points(pr[,1:2], cex =  1 + 2*phyto$phyto_pct/max(phyto$phyto_pct), pch = 1, col = rgb(0,0,0,1))
+		#library(rgl)
+	#plot3d(pa[pa.ok,], col = terrain.colors(5)[cut(dis,5)], cex = 2)
 
+	
+	plot(unc.hi , col = pal2(12), breaks = brks)
+	points(phyto[,c('lon','lat')], cex = 2, pch =3, lwd = 1.5, col = rgb(0,0,0,.3))
+	points(phyto[,c('lon','lat')], cex = .5, pch =1, lwd = 1.5, col = rgb(0,0,0,.2))
+	
+	dev.off()
 
+	levelplot(unc, contour = TRUE)
+	unc.hi <- unc
+	
+	# Apply this surface to predicted distribution
+	plot(unc)
+	out <- unc > 2
+	out2 <- 1/unc * out
+	int <- unc <= 2
+	int [ int[] < 1 ] <- NA 
 
-
-
-ROW <-2  # cor
-ens <- p.lsoc*cv_clary[ROW,4]  +  p.ctc* cv_clary[ROW,2] + p.gc * cv_clary[ROW,3]*0 + p.rfc*cv_clary[ROW,1] + p.olsc*cv_clary[ROW,5]*0
-ens <- ens / sum(cv_clary[ROW,])
-
-plot(ens)
-ens[ens[] < 0] <- 0
-plot(ens)
-
-points(phyto[, c('lon','lat')], cex = 1 + phyto$phyto_pct^3)
-
-p.ens <- extract(ens, phyto[, c('lon','lat')])
-t.ens <- c( 'cor' = cor( p.ens, obs), 
-	'R2' = cor( p.ens, obs)**2,
-	'rmse' = sqrt(mean( (p.ens - obs)^2)),
-	'MAE' = mean( abs(p.ens - obs)),
-	'ME' = mean( p.ens - obs),
-	'MEDE' = median( p.ens - obs),
-	'I' = round(moran( p.ens - obs, phyto[, c('lon','lat')] )$statistic,4)
-	)
-
-
+	plot(ens ,col = rev(terrain.colors(10, alpha = .4)), legend = F)
+	plot(ens * int,add = TRUE)
+	
+##############################################################################################s
+##############################################################################################s
 
 

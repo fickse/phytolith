@@ -8,6 +8,9 @@ library(randomForest)
 library(rpart)
 
 
+spec <- colorRampPalette( c("#256EC2","#3D9ABE","#42C695","#5DD64B","#AEE34E","#DDEC53","#F8EE49","#F6D53A","#F5B52D","#EE8913","#E16310","#CB4707","#B61904","#9B0000") )
+
+
 # Fit an ensemble model
 
 	ensemble.fit <- function(f,dat,X,Y){

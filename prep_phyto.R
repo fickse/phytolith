@@ -28,7 +28,11 @@ e.topo <- as.data.frame( extract( topo, z[, c('lon','lat')]))
 
 e <- as.data.frame(extract(b, z[, c('lon','lat')]))
 
-# nas <- which( apply(e,1, function(x) any(is.na(x))))
+nas <- which( apply(e,1, function(x) any(is.na(x))))
+
+# 
+# e[109,'rootaws'] <- 128.55
+# e[c(109,58,45),'wetland'] <- 0
 
 # slope2 <- focal(b[['slope']], matrix(1, 7,7), fun = mean, na.rm=TRUE)
 # e[nas,'slope'] <- extract(slope2, z[nas, c('lon','lat')])

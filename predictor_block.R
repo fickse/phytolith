@@ -7,29 +7,54 @@ library(xtable)
 
 setwd('C:/projects/phytolith/')
 
+# bioclim 1
 bio <- stack( list.files ("C:/data/clim/wc2-5/bio/wc2-5", full = TRUE, pattern = 'bil$') ) 
+
+# bioclim 600 bp
 bio4 <- stack('C:/projects/phytolith/data/raw/bioclim_600pb.tif')
 names(bio4) <- gsub('600pb', '400AD', names(bio4))
+
+# bioclim 6000 bp
 bio6 <- stack('C:/projects/phytolith/data/raw/bioclim_6kpb.tif')
 names(bio6) <- gsub('6kpb', '6kbp', names(bio6))
+
+# bioclim 1000 bp
 bio8 <- stack('C:/projects/phytolith/data/raw/bio_millenium.tif')
 names(bio8) <- gsub('millenium', 'preind', names(bio8))
 
+# soilgrids data
 soil <- stack('C:/data/soil/soilgrids/ca/aggregated/ca_soil_30cm.grd')
+
+# gssurgo data
+wetland <- raster("C:/projects/phytolith/data/wetfinal.tif")
+names(wetland) <- 'wetland'
+
+# altitude
 alt <- raster("C:/data/elev/wc_elev30_land.tif")
+
+# calveg
 veg <- raster("C:/data/veg/calveg.grd")
 veg <- as.factor(round(veg))
 names(veg) <- 'veg'
 
+# wc1
 wc <- stack( lapply(
 					list.files( "C:/data/clim/wc2-5/", pattern = "prec.*?bil$",full = TRUE)[c(1,5:12,2:4)], raster )
 			)
+
+# wc Temperature			
+wcT <- stack( lapply(
+					list.files( "C:/data/clim/wc2-5/", pattern = "tmean.*?bil$",full = TRUE)[c(1,5:12,2:4)], raster )
+			)
+
 
 # get a mask of california for plotting results
 mask <- shapefile('C:/Users/steve/Downloads/GEO2015/13/counties_2000.shp')
 mask <- spTransform(mask, CRS(projection(bio)))
 
+# crop data to mask
 wc <- crop(wc, mask)
+wcT <- crop(wcT, mask);wcT <- wcT/10
 bio <- crop(bio, mask)
 bio4 <- crop(bio4, mask)
 bio6 <- crop(bio6, mask)
@@ -38,7 +63,9 @@ soil <- crop(soil, mask)
 veg <- crop(veg, mask)
 alt <- crop(alt, mask)
 
+# resample to resolution of 'alt'
 wc <- resample(wc, alt, progress = 'text')
+wcT <- resample(wcT, alt, progress = 'text')
 bio <- resample(bio, alt, progress = 'text')
 bio4 <- resample(bio4, alt, progress = 'text')
 bio6 <- resample(bio6, alt, progress = 'text')
@@ -53,18 +80,27 @@ names(eastness) <- 'eastness'
 names(northness) <- 'northness'
 hillshade <- hillShade(slope, aspect,40, 20)
 
-
+# Generate summer precip
 summer_precip <- sum(wc[[5:9]])
 names(summer_precip) <- 'summer_precip'
 
-dcoast <- is.na(alt)
-dcoast[dcoast==0] <- NA
-dcoast <- distance(dcoast, progress = 'text')
-#why log? not sure about this one
-	#dcoast <- log(dcoast)
+#NPP from the 'Miami' equation
+	NPPt <- 3000/( 1 + exp( 1.315 - .119* mean(wcT)))
+	NPPp <- 3000*( 1 - exp( - 0.000664 * sum(wc)))
+	NPP <- overlay( NPPt, NPPp, fun = function(x,y) pmin(x,y))
+	names(NPP) = 'NPP'
+# Distance to coast (takes a long time)
+thefile <- "C:/projects/phytolith/data/dcoast.tif"
+if( file.exists(thefile)) {
+	dcoast <- raster(thefile)
+} else {
+	dcoast <- is.na(alt)
+	dcoast[dcoast==0] <- NA
+	dcoast <- distance(dcoast, progress = 'text', file = thefile)
+}
 names(dcoast) <- 'dcoast'
 
-block <- stack(hillshade, alt, slope,northness, eastness,  dcoast, veg, soil,summer_precip, bio, bio4, bio6, bio8)
+block <- stack(hillshade, alt, slope,northness, eastness,  dcoast, veg, soil,summer_precip, bio, bio4, bio6, bio8, wetland, NPP)
 names(block)[c(1,2)] <- c('hillshade','alt')
 
 #writeRaster(block, file = 'C:/projects/phytolith/data/predictors.grd', overwrite = TRUE)
